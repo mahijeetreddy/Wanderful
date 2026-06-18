@@ -1,0 +1,308 @@
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Barlow:wght@300;400;500;600&family=Inter:wght@300;400;500;600;700&display=swap');
+
+@font-face {
+  font-family: 'Dirtyline';
+  src: url('https://fonts.cdnfonts.com/s/15011/Dirtyline36DaysofType.woff') format('woff');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  background: #000;
+  font-family: 'Barlow', sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background: #000;
+  font-family: 'Barlow', sans-serif;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+::selection {
+  color: #000;
+  background: rgba(255, 255, 255, 0.86);
+}
+
+.liquid-glass {
+  background: rgba(255,255,255,0.01);
+  background-blend-mode: luminosity;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  border: none;
+  box-shadow: inset 0 1px 1px rgba(255,255,255,0.1);
+  position: relative;
+  overflow: hidden;
+}
+
+.liquid-glass::before {
+  content: "";
+  position: absolute; inset: 0;
+  border-radius: inherit;
+  padding: 1.4px;
+  background: linear-gradient(180deg,
+    rgba(255,255,255,0.45) 0%,
+    rgba(255,255,255,0.15) 20%,
+    rgba(255,255,255,0) 40%,
+    rgba(255,255,255,0) 60%,
+    rgba(255,255,255,0.15) 80%,
+    rgba(255,255,255,0.45) 100%);
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+.action-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.08);
+  padding: 0.62rem 0.9rem;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 0.78rem;
+  font-weight: 500;
+  transition: transform 180ms ease, background 180ms ease, color 180ms ease;
+}
+
+.action-button:hover {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+
+.itinerary-markdown {
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.itinerary-markdown > *:first-child {
+  margin-top: 0;
+}
+
+.itinerary-markdown h1,
+.itinerary-markdown h2,
+.itinerary-markdown h3 {
+  color: #fff;
+  letter-spacing: -0.03em;
+}
+
+.itinerary-markdown h1 {
+  margin: 0 0 1.4rem;
+  font-size: clamp(2rem, 4vw, 3.8rem);
+  line-height: 0.96;
+  font-weight: 500;
+}
+
+.itinerary-markdown h2 {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  margin: 2rem 0 0.85rem;
+  font-size: clamp(1.35rem, 2vw, 2rem);
+  line-height: 1.1;
+  font-weight: 500;
+}
+
+.itinerary-markdown h2::before {
+  content: "";
+  width: 0.58rem;
+  height: 0.58rem;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 0 24px rgba(255, 255, 255, 0.42);
+}
+
+.itinerary-markdown h3 {
+  margin: 1.35rem 0 0.65rem;
+  font-size: 1.08rem;
+  line-height: 1.35;
+  font-weight: 600;
+}
+
+.itinerary-markdown p {
+  margin: 0.72rem 0;
+  font-size: 0.98rem;
+  line-height: 1.72;
+}
+
+.itinerary-markdown ul,
+.itinerary-markdown ol {
+  margin: 0.85rem 0 1.25rem;
+  padding: 0;
+  list-style: none;
+}
+
+.itinerary-markdown li {
+  position: relative;
+  margin: 0.55rem 0;
+  padding: 0.72rem 0.9rem 0.72rem 2.4rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 1.25rem;
+  background: rgba(255, 255, 255, 0.04);
+  line-height: 1.55;
+}
+
+.itinerary-markdown li::before {
+  content: "";
+  position: absolute;
+  left: 1rem;
+  top: 1.22rem;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.itinerary-markdown strong {
+  color: #fff;
+  font-weight: 600;
+}
+
+.itinerary-markdown em {
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.itinerary-markdown blockquote {
+  margin: 1.3rem 0;
+  border-left: 3px solid rgba(255, 255, 255, 0.55);
+  border-radius: 1.25rem;
+  background: rgba(255, 255, 255, 0.055);
+  padding: 0.9rem 1rem;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.itinerary-markdown table {
+  width: 100%;
+  margin: 1.25rem 0;
+  overflow: hidden;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 1.4rem;
+  background: rgba(0, 0, 0, 0.22);
+  font-size: 0.92rem;
+}
+
+.itinerary-markdown th,
+.itinerary-markdown td {
+  padding: 0.9rem 1rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  text-align: left;
+  vertical-align: top;
+}
+
+.itinerary-markdown th {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.itinerary-markdown tr:last-child td {
+  border-bottom: 0;
+}
+
+.itinerary-markdown hr {
+  margin: 2rem 0;
+  border: 0;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.hotel-map {
+  min-height: 720px;
+  width: 100%;
+  background: #111;
+}
+
+.leaflet-container {
+  font-family: 'Barlow', sans-serif;
+}
+
+.leaflet-control-attribution {
+  border-radius: 999px 0 0 0;
+  background: rgba(0, 0, 0, 0.72) !important;
+  color: rgba(255, 255, 255, 0.74) !important;
+  font-size: 10px;
+}
+
+.leaflet-control-attribution a {
+  color: #fff !important;
+}
+
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+  background: rgba(12, 12, 12, 0.94);
+  color: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+}
+
+.hotel-marker {
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.24);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4), 0 14px 28px rgba(0, 0, 0, 0.35);
+}
+
+.hotel-marker span {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: #fff;
+  border: 3px solid #111;
+}
+
+.hotel-marker-selected {
+  background: rgba(255, 255, 255, 0.42);
+}
+
+.hotel-marker-selected span {
+  width: 18px;
+  height: 18px;
+}
+
+@media (max-width: 760px) {
+  body {
+    overflow-x: hidden;
+  }
+
+  .hotel-map {
+    min-height: 420px;
+  }
+}

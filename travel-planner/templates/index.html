@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PrismTrip Planner</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <div class="hero-copy">
+          <div class="brand-row">
+            <span class="brand-mark"></span>
+            <span>PrismTrip Studio</span>
+          </div>
+          <p class="eyebrow">Multi-agent travel intelligence</p>
+          <h1>PrismTrip Planner</h1>
+          <p class="lede">
+            Build a live, budget-aware itinerary with flight search, hotel discovery,
+            weather logistics, and local activities coordinated by CrewAI agents.
+          </p>
+          <div class="hero-stats">
+            <span><strong>5</strong> agents</span>
+            <span><strong>3</strong> live APIs</span>
+            <span><strong>1</strong> markdown plan</span>
+          </div>
+        </div>
+        <div class="trip-orbit" aria-hidden="true">
+          <span class="pin pin-a"></span>
+          <span class="pin pin-b"></span>
+          <span class="pin pin-c"></span>
+          <div class="mini-ticket ticket-top">
+            <span>LAX</span>
+            <strong>HNL</strong>
+          </div>
+          <div class="mini-ticket ticket-side">
+            <span>Weather</span>
+            <strong>Live forecast</strong>
+          </div>
+          <div class="route-card">
+            <span>Route scan</span>
+            <strong>Flights + Hotels + Weather</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="workspace">
+        <form id="planner-form" class="planner-panel">
+          <div class="panel-head">
+            <div>
+              <p class="section-kicker">Trip brief</p>
+              <h2>Where should the agents take you?</h2>
+            </div>
+            <span class="live-pill">Gemini/Groq + SerpAPI</span>
+          </div>
+
+          <div class="grid two">
+            <label>
+              <span>Origin</span>
+              <input name="origin" placeholder="SFO" required>
+            </label>
+            <label>
+              <span>Destination</span>
+              <input name="destination" placeholder="NYC or New York" required>
+            </label>
+          </div>
+
+          <div class="grid two">
+            <label>
+              <span>Start date</span>
+              <input type="date" name="start_date" required>
+            </label>
+            <label>
+              <span>End date</span>
+              <input type="date" name="end_date" required>
+            </label>
+          </div>
+
+          <div class="grid three">
+            <label>
+              <span>Budget</span>
+              <input name="budget" inputmode="decimal" placeholder="2500" required>
+            </label>
+            <label>
+              <span>Currency</span>
+              <input name="currency_code" value="USD" maxlength="3" required>
+            </label>
+            <label>
+              <span>Adults</span>
+              <input type="number" name="adults" value="1" min="1" max="9" required>
+            </label>
+          </div>
+
+          <label>
+            <span>Interests</span>
+            <textarea name="interests" rows="4" placeholder="museums, street food, architecture, hikes, jazz bars" required></textarea>
+          </label>
+
+          <button class="primary-action" type="submit">
+            <span>Generate travel plan</span>
+            <span class="arrow">→</span>
+          </button>
+          <p class="form-note">Gemini free-tier quota is throttled; complete plans can take a few minutes.</p>
+        </form>
+
+        <aside class="status-panel">
+          <p class="section-kicker">Agent pipeline</p>
+          <h2>Planning stages</h2>
+          <ol class="timeline">
+            <li data-step="budget"><strong>Budget strategy</strong><span>Allocates spend by category</span></li>
+            <li data-step="flight"><strong>Flight search</strong><span>Checks Google Flights via SerpAPI</span></li>
+            <li data-step="hotel"><strong>Hotel search</strong><span>Finds Google Hotels options</span></li>
+            <li data-step="weather"><strong>Weather logistics</strong><span>Packs around forecast constraints</span></li>
+            <li data-step="activity"><strong>Local itinerary</strong><span>Builds day-by-day flow</span></li>
+            <li data-step="final"><strong>Final compilation</strong><span>Formats Markdown output</span></li>
+          </ol>
+        </aside>
+      </section>
+
+      <section class="result-section" id="result-section" hidden>
+        <div class="result-head">
+          <div>
+            <p class="section-kicker">Final itinerary</p>
+            <h2>Your agent-built plan</h2>
+          </div>
+          <button id="copy-button" class="secondary-action" type="button">Copy Markdown</button>
+        </div>
+        <div id="error-box" class="error-box" hidden></div>
+        <article id="itinerary" class="itinerary"></article>
+      </section>
+    </main>
+
+    <div id="loading-overlay" class="loading-overlay" hidden>
+        <div class="loader-card">
+          <div class="loader"></div>
+          <h2>Agents are planning your trip</h2>
+          <p id="loading-message">This can take a few minutes while live APIs and the CrewAI workflow run.</p>
+        </div>
+      </div>
+
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+  </body>
+</html>
