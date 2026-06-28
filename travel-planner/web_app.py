@@ -31,19 +31,34 @@ if os.getenv("USE_SYSTEM_PROXY", "false").lower() != "true":
         os.environ.pop(proxy_var, None)
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, render_template, request, send_from_directory
+from flask import Flask, jsonify, render_template, request, send_from_directory, session
 from crewai import Crew, Process
 
 from agents import create_orchestrator_agent
+from auth_store import (
+    authenticate_user,
+    change_user_password,
+    create_saved_trip,
+    create_user,
+    delete_saved_trip,
+    get_user,
+    get_user_preferences,
+    init_auth_store,
+    list_saved_trips,
+    upsert_user_preferences,
+)
 from data_collector import collect_trip_data, search_flight_options_from_instruction
 from main import DATE_FORMAT, TravelInputs, build_travel_crew
 from tasks import create_fast_itinerary_task
+from tools import fetch_flight_booking_options
 
 
 load_dotenv()
 
 app = Flask(__name__)
+app.secret_key = os.getenv("AUTH_SECRET_KEY", "dev-only-change-me")
 executor = ThreadPoolExecutor(max_workers=1)
+init_auth_store()
 
 
 def _clean_text(value: Any) -> str:
@@ -111,6 +126,13 @@ def _validate_payload(payload: dict[str, Any]) -> TravelInputs:
     )
 
 
+def _current_user_id() -> int:
+    user_id = session.get("user_id")
+    if not user_id:
+        raise PermissionError("Sign in to use this feature.")
+    return int(user_id)
+
+
 @app.get("/")
 def index() -> str:
     dist_index = Path("dist/index.html")
@@ -122,6 +144,155 @@ def index() -> str:
 @app.get("/assets/<path:filename>")
 def vite_assets(filename: str):
     return send_from_directory("dist/assets", filename)
+
+
+@app.get("/api/auth/me")
+def auth_me():
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({"user": None})
+    user = get_user(int(user_id))
+    if not user:
+        session.clear()
+        return jsonify({"user": None})
+    return jsonify({"user": user})
+
+
+@app.post("/api/auth/register")
+def auth_register():
+    try:
+        payload = request.get_json(force=True)
+        if not isinstance(payload, dict):
+            raise ValueError("Request body must be a JSON object.")
+        name = _clean_text(payload.get("name"))
+        email = _clean_text(payload.get("email")).lower()
+        password = str(payload.get("password") or "")
+        if len(name) < 2:
+            raise ValueError("Name must be at least 2 characters.")
+        if "@" not in email or "." not in email:
+            raise ValueError("Enter a valid email address.")
+        if len(password) < 8:
+            raise ValueError("Password must be at least 8 characters.")
+        user = create_user(name, email, password)
+        session["user_id"] = user["id"]
+        return jsonify({"user": user})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"error": _friendly_error(exc)}), 500
+
+
+@app.post("/api/auth/login")
+def auth_login():
+    try:
+        payload = request.get_json(force=True)
+        if not isinstance(payload, dict):
+            raise ValueError("Request body must be a JSON object.")
+        email = _clean_text(payload.get("email")).lower()
+        password = str(payload.get("password") or "")
+        user = authenticate_user(email, password)
+        if not user:
+            return jsonify({"error": "Invalid email or password."}), 401
+        session["user_id"] = user["id"]
+        return jsonify({"user": user})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"error": _friendly_error(exc)}), 500
+
+
+@app.post("/api/auth/logout")
+def auth_logout():
+    session.clear()
+    return jsonify({"user": None})
+
+
+@app.put("/api/auth/password")
+def auth_password_change():
+    try:
+        payload = request.get_json(force=True)
+        if not isinstance(payload, dict):
+            raise ValueError("Request body must be a JSON object.")
+        current_password = str(payload.get("current_password") or "")
+        new_password = str(payload.get("new_password") or "")
+        if len(new_password) < 8:
+            raise ValueError("New password must be at least 8 characters.")
+        change_user_password(_current_user_id(), current_password, new_password)
+        return jsonify({"ok": True})
+    except PermissionError as exc:
+        return jsonify({"error": str(exc)}), 401
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"error": _friendly_error(exc)}), 500
+
+
+@app.get("/api/trips")
+def trips_list():
+    try:
+        return jsonify({"trips": list_saved_trips(_current_user_id())})
+    except PermissionError as exc:
+        return jsonify({"error": str(exc)}), 401
+    except Exception as exc:
+        return jsonify({"error": _friendly_error(exc)}), 500
+
+
+@app.post("/api/trips")
+def trips_create():
+    try:
+        user_id = _current_user_id()
+        payload = request.get_json(force=True)
+        if not isinstance(payload, dict):
+            raise ValueError("Request body must be a JSON object.")
+        for field in ("name", "destination", "dateRange", "form", "itinerary"):
+            if field not in payload:
+                raise ValueError(f"Missing required field: {field}.")
+        trip = create_saved_trip(user_id, payload)
+        return jsonify({"trip": trip})
+    except PermissionError as exc:
+        return jsonify({"error": str(exc)}), 401
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"error": _friendly_error(exc)}), 500
+
+
+@app.delete("/api/trips/<int:trip_id>")
+def trips_delete(trip_id: int):
+    try:
+        deleted = delete_saved_trip(_current_user_id(), trip_id)
+        if not deleted:
+            return jsonify({"error": "Saved trip not found."}), 404
+        return jsonify({"ok": True})
+    except PermissionError as exc:
+        return jsonify({"error": str(exc)}), 401
+    except Exception as exc:
+        return jsonify({"error": _friendly_error(exc)}), 500
+
+
+@app.get("/api/preferences")
+def preferences_get():
+    try:
+        return jsonify({"preferences": get_user_preferences(_current_user_id())})
+    except PermissionError as exc:
+        return jsonify({"error": str(exc)}), 401
+    except Exception as exc:
+        return jsonify({"error": _friendly_error(exc)}), 500
+
+
+@app.put("/api/preferences")
+def preferences_put():
+    try:
+        payload = request.get_json(force=True)
+        if not isinstance(payload, dict):
+            raise ValueError("Request body must be a JSON object.")
+        return jsonify({"preferences": upsert_user_preferences(_current_user_id(), payload)})
+    except PermissionError as exc:
+        return jsonify({"error": str(exc)}), 401
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"error": _friendly_error(exc)}), 500
 
 
 @app.post("/api/plan")
@@ -165,6 +336,21 @@ def create_flight_options():
             raise ValueError("Missing required field: instruction.")
         travel_inputs = _validate_payload(payload)
         return jsonify(search_flight_options_from_instruction(travel_inputs, instruction))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"error": _friendly_error(exc)}), 500
+
+
+@app.post("/api/flight-booking-options")
+def create_flight_booking_options():
+    try:
+        payload = request.get_json(force=True)
+        if not isinstance(payload, dict):
+            raise ValueError("Request body must be a JSON object.")
+        booking_token = _clean_text(payload.get("booking_token"))
+        currency_code = _clean_text(payload.get("currency_code")) or "USD"
+        return jsonify(fetch_flight_booking_options(booking_token, currency_code))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     except Exception as exc:

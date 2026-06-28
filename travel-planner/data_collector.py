@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from main import TravelInputs
-from tools import FlightSearchTool, HotelSearchTool, LocalSearchTool, WeatherForecastTool
+from tools import FlightSearchTool, HotelSearchTool, LocalSearchTool, WeatherForecastTool, normalize_airport_id
 
 NearbyAirports = dict[str, list[dict[str, str]]]
 
@@ -139,6 +139,7 @@ def normalize_flight_options(provider_result: str) -> list[dict[str, Any]]:
                 "currency": offer.get("currency"),
                 "total_duration_minutes": offer.get("total_duration_minutes"),
                 "layovers": offer.get("layovers") if isinstance(offer.get("layovers"), list) else [],
+                "departure_token": offer.get("departure_token"),
                 "booking_token": offer.get("booking_token"),
                 "reference": offer.get("reference"),
                 "segments": flights,
@@ -251,8 +252,8 @@ def apply_flight_instruction(travel_inputs: TravelInputs, instruction: str) -> T
             values[target] = shifted
 
     if "nearby" in lowered:
-        origin_options = NEARBY_AIRPORTS.get(travel_inputs.origin.strip().upper(), [])
-        destination_options = NEARBY_AIRPORTS.get(travel_inputs.destination.strip().upper(), [])
+        origin_options = NEARBY_AIRPORTS.get(normalize_airport_id(travel_inputs.origin), [])
+        destination_options = NEARBY_AIRPORTS.get(normalize_airport_id(travel_inputs.destination), [])
         if "destination" in lowered or "arrival" in lowered:
             if destination_options:
                 values["destination"] = destination_options[0]["code"]
@@ -330,7 +331,7 @@ def _shift_date(value: str, offset_days: int) -> str | None:
 def _nearby_airport_suggestions(travel_inputs: TravelInputs) -> list[tuple[str, str, str]]:
     suggestions: list[tuple[str, str, str]] = []
     for direction, raw_code in (("origin", travel_inputs.origin), ("destination", travel_inputs.destination)):
-        for airport in NEARBY_AIRPORTS.get(raw_code.strip().upper(), []):
+        for airport in NEARBY_AIRPORTS.get(normalize_airport_id(raw_code), []):
             suggestions.append((airport["code"], airport["label"], direction))
     return suggestions
 

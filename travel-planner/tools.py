@@ -30,6 +30,51 @@ SERPAPI_SEARCH_URL = "https://serpapi.com/search"
 OPENWEATHER_GEO_URL = "https://api.openweathermap.org/geo/1.0/direct"
 OPENWEATHER_FORECAST_URL = "https://api.openweathermap.org/data/2.5/forecast"
 
+AIRPORT_ALIASES: dict[str, str] = {
+    "los angeles": "LAX",
+    "los angeles ca": "LAX",
+    "la": "LAX",
+    "lax": "LAX",
+    "burbank": "BUR",
+    "orange county": "SNA",
+    "san jose": "SJC",
+    "san jose ca": "SJC",
+    "sjc": "SJC",
+    "san francisco": "SFO",
+    "san francisco ca": "SFO",
+    "sfo": "SFO",
+    "oakland": "OAK",
+    "new york": "NYC",
+    "new york city": "NYC",
+    "nyc": "NYC",
+    "jfk": "JFK",
+    "newark": "EWR",
+    "chicago": "ORD",
+    "chicago il": "ORD",
+    "miami": "MIA",
+    "seattle": "SEA",
+    "denver": "DEN",
+    "dallas": "DFW",
+    "houston": "IAH",
+    "atlanta": "ATL",
+    "boston": "BOS",
+    "washington dc": "DCA",
+    "las vegas": "LAS",
+    "honolulu": "HNL",
+    "hawaii": "HNL",
+    "maui": "OGG",
+    "tokyo": "TYO",
+    "kyoto": "KIX",
+    "osaka": "KIX",
+    "paris": "PAR",
+    "london": "LON",
+    "rome": "ROM",
+    "barcelona": "BCN",
+    "amsterdam": "AMS",
+    "dubai": "DXB",
+    "singapore": "SIN",
+}
+
 
 def _timeout() -> int:
     raw_value = os.getenv("REQUEST_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS))
@@ -70,6 +115,53 @@ def _parse_iso_date(value: str, field_name: str) -> date:
 
 def _compact_json(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2)
+
+
+def normalize_airport_id(value: str) -> str:
+    """Convert common city/place inputs into SerpAPI-compatible airport IDs."""
+    raw = str(value or "").strip()
+    upper = raw.upper()
+    if len(upper) == 3 and upper.isalpha():
+        return upper
+
+    normalized = _normalize_place_key(raw)
+    if normalized in AIRPORT_ALIASES:
+        return AIRPORT_ALIASES[normalized]
+
+    first_part = raw.split(",")[0].strip()
+    first_part_key = _normalize_place_key(first_part)
+    if first_part_key in AIRPORT_ALIASES:
+        return AIRPORT_ALIASES[first_part_key]
+
+    return upper
+
+
+def _normalize_place_key(value: str) -> str:
+    import re
+
+    cleaned = value.lower().replace("&", " and ")
+    cleaned = re.sub(r"[^a-z0-9\s]", " ", cleaned)
+    tokens = [
+        token
+        for token in cleaned.split()
+        if token not in {"airport", "international", "intl", "city", "usa", "us", "united", "states"}
+    ]
+    if len(tokens) > 1 and tokens[-1] in {
+        "ca",
+        "ny",
+        "il",
+        "fl",
+        "wa",
+        "tx",
+        "ga",
+        "ma",
+        "nv",
+        "co",
+    }:
+        without_state = " ".join(tokens[:-1])
+        with_state = " ".join(tokens)
+        return with_state if with_state in AIRPORT_ALIASES else without_state
+    return " ".join(tokens)
 
 
 def _serpapi_get(params: dict[str, Any]) -> dict[str, Any]:
@@ -125,10 +217,12 @@ class FlightSearchTool(BaseTool):
             if return_date:
                 _parse_iso_date(return_date, "return_date")
 
+            resolved_origin = normalize_airport_id(origin)
+            resolved_destination = normalize_airport_id(destination)
             params: dict[str, Any] = {
                 "engine": "google_flights",
-                "departure_id": origin.strip().upper(),
-                "arrival_id": destination.strip().upper(),
+                "departure_id": resolved_origin,
+                "arrival_id": resolved_destination,
                 "outbound_date": departure_date,
                 "currency": currency_code.upper(),
                 "adults": adults,
@@ -170,9 +264,10 @@ class FlightSearchTool(BaseTool):
                         "total_duration_minutes": offer.get("total_duration"),
                         "layovers": offer.get("layovers", []),
                         "carbon_emissions": offer.get("carbon_emissions"),
+                        "departure_token": offer.get("departure_token"),
                         "booking_token": offer.get("booking_token"),
                         "flights": flights,
-                        "reference": "Use the SerpAPI booking_token for deeper booking-options lookup, or open Google Flights manually.",
+                        "reference": "Use the SerpAPI booking_token for booking options. Some Google Flights round-trip results require a departure_token step before return details are complete.",
                     }
                 )
                 if len(summaries) == 5:
@@ -180,7 +275,12 @@ class FlightSearchTool(BaseTool):
 
             return _compact_json(
                 {
-                    "route": f"{origin.strip().upper()} to {destination.strip().upper()}",
+                    "route": f"{resolved_origin} to {resolved_destination}",
+                    "input_route": f"{origin.strip()} to {destination.strip()}",
+                    "airport_resolution": {
+                        "origin": {"input": origin, "resolved": resolved_origin},
+                        "destination": {"input": destination, "resolved": resolved_destination},
+                    },
                     "source": "SerpAPI Google Flights",
                     "search_metadata": payload.get("search_metadata", {}),
                     "offers": summaries,
@@ -188,6 +288,54 @@ class FlightSearchTool(BaseTool):
             )
         except Exception as exc:
             return _format_api_error("Flight search failed", exc)
+
+
+def fetch_flight_booking_options(booking_token: str, currency_code: str = "USD") -> dict[str, Any]:
+    """Fetch SerpAPI Google Flights booking options for a selected flight token."""
+    cleaned_token = str(booking_token or "").strip()
+    if not cleaned_token:
+        raise ValueError("Missing booking_token.")
+    payload = _serpapi_get(
+        {
+            "engine": "google_flights",
+            "booking_token": cleaned_token,
+            "currency": currency_code.upper(),
+            "hl": "en",
+            "gl": "us",
+        }
+    )
+    return {
+        "source": "SerpAPI Google Flights booking options",
+        "booking_options": _normalize_booking_options(payload),
+        "raw_keys": sorted(payload.keys()),
+    }
+
+
+def _normalize_booking_options(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_options = payload.get("booking_options")
+    if not isinstance(raw_options, list):
+        raw_options = payload.get("booking_options_results")
+    if not isinstance(raw_options, list):
+        raw_options = payload.get("tickets")
+    if not isinstance(raw_options, list):
+        return []
+
+    normalized: list[dict[str, Any]] = []
+    for index, option in enumerate(raw_options[:8]):
+        if not isinstance(option, dict):
+            continue
+        normalized.append(
+            {
+                "id": f"booking-{index + 1}",
+                "title": option.get("title") or option.get("name") or option.get("booking_site") or "Booking option",
+                "price": option.get("price") or option.get("total_price"),
+                "currency": option.get("currency"),
+                "link": option.get("link") or option.get("url") or option.get("booking_link"),
+                "description": option.get("description") or option.get("details"),
+                "extensions": option.get("extensions") if isinstance(option.get("extensions"), list) else [],
+            }
+        )
+    return normalized
 
 
 class HotelSearchInput(BaseModel):
