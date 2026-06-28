@@ -311,6 +311,72 @@ def fetch_flight_booking_options(booking_token: str, currency_code: str = "USD")
     }
 
 
+def fetch_return_flight_options(departure_token: str, currency_code: str = "USD") -> dict[str, Any]:
+    """Fetch return-flight choices for a selected outbound SerpAPI result."""
+    cleaned_token = str(departure_token or "").strip()
+    if not cleaned_token:
+        raise ValueError("Missing departure_token.")
+    payload = _serpapi_get(
+        {
+            "engine": "google_flights",
+            "departure_token": cleaned_token,
+            "currency": currency_code.upper(),
+            "hl": "en",
+            "gl": "us",
+        }
+    )
+    return {
+        "source": "SerpAPI Google Flights return options",
+        "return_options": _normalize_return_flight_options(payload, currency_code),
+        "raw_keys": sorted(payload.keys()),
+    }
+
+
+def _normalize_return_flight_options(payload: dict[str, Any], currency_code: str) -> list[dict[str, Any]]:
+    offers = payload.get("best_flights")
+    if not isinstance(offers, list) or not offers:
+        offers = payload.get("other_flights")
+    if not isinstance(offers, list):
+        return []
+
+    normalized: list[dict[str, Any]] = []
+    for index, offer in enumerate(offers[:8]):
+        if not isinstance(offer, dict):
+            continue
+        segments = []
+        for flight in offer.get("flights", []):
+            if not isinstance(flight, dict):
+                continue
+            segments.append(
+                {
+                    "airline": flight.get("airline"),
+                    "flight_number": flight.get("flight_number"),
+                    "from": flight.get("departure_airport", {}).get("id"),
+                    "to": flight.get("arrival_airport", {}).get("id"),
+                    "depart_at": flight.get("departure_airport", {}).get("time"),
+                    "arrive_at": flight.get("arrival_airport", {}).get("time"),
+                    "airplane": flight.get("airplane"),
+                    "travel_class": flight.get("travel_class"),
+                    "duration_minutes": flight.get("duration"),
+                }
+            )
+        normalized.append(
+            {
+                "id": f"return-{index + 1}",
+                "total_price": offer.get("price"),
+                "currency": currency_code.upper(),
+                "total_duration_minutes": offer.get("total_duration"),
+                "layovers": offer.get("layovers") if isinstance(offer.get("layovers"), list) else [],
+                "departure_token": offer.get("departure_token"),
+                "booking_token": offer.get("booking_token"),
+                "segments": segments,
+                "has_return_details": True,
+                "reference": "Return option retrieved with SerpAPI departure_token. Use booking_token for booking options when available.",
+            }
+        )
+    return normalized
+
+
 def _normalize_booking_options(payload: dict[str, Any]) -> list[dict[str, Any]]:
     raw_options = payload.get("booking_options")
     if not isinstance(raw_options, list):

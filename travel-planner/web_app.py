@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import json
+import uuid
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
@@ -47,18 +48,20 @@ from auth_store import (
     list_saved_trips,
     upsert_user_preferences,
 )
-from data_collector import collect_trip_data, search_flight_options_from_instruction
+from data_collector import collect_trip_data, search_flight_options_from_instruction, search_hotel_options_with_budget
 from main import DATE_FORMAT, TravelInputs, build_travel_crew
+from runtime_store import create_plan_job, get_plan_job, init_runtime_store, update_plan_job
 from tasks import create_fast_itinerary_task
-from tools import fetch_flight_booking_options
+from tools import fetch_flight_booking_options, fetch_return_flight_options
 
 
 load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = os.getenv("AUTH_SECRET_KEY", "dev-only-change-me")
-executor = ThreadPoolExecutor(max_workers=1)
+executor = ThreadPoolExecutor(max_workers=int(os.getenv("PLAN_WORKERS", "2")))
 init_auth_store()
+init_runtime_store()
 
 
 def _clean_text(value: Any) -> str:
@@ -325,6 +328,48 @@ def create_plan():
         return jsonify({"error": _friendly_error(exc)}), 500
 
 
+@app.post("/api/plan-jobs")
+def create_plan_job_route():
+    try:
+        payload = request.get_json(force=True)
+        if not isinstance(payload, dict):
+            raise ValueError("Request body must be a JSON object.")
+        travel_inputs = _validate_payload(payload)
+        job_id = uuid.uuid4().hex
+        job = create_plan_job(job_id, travel_inputs.as_crew_inputs())
+        executor.submit(_run_plan_job, job_id, travel_inputs)
+        return jsonify({"job_id": job_id, "job": job}), 202
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"error": _friendly_error(exc)}), 500
+
+
+@app.get("/api/plan-jobs/<job_id>")
+def get_plan_job_route(job_id: str):
+    job = get_plan_job(job_id)
+    if not job:
+        return jsonify({"error": "Plan job not found."}), 404
+    return jsonify({"job": job})
+
+
+@app.post("/api/hotel-options")
+def create_hotel_options():
+    try:
+        payload = request.get_json(force=True)
+        if not isinstance(payload, dict):
+            raise ValueError("Request body must be a JSON object.")
+        travel_inputs = _validate_payload(payload)
+        nightly_budget = float(_clean_text(payload.get("nightly_budget")) or 0)
+        if nightly_budget <= 0:
+            raise ValueError("nightly_budget must be greater than zero.")
+        return jsonify(search_hotel_options_with_budget(travel_inputs, nightly_budget))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"error": _friendly_error(exc)}), 500
+
+
 @app.post("/api/flight-options")
 def create_flight_options():
     try:
@@ -357,6 +402,21 @@ def create_flight_booking_options():
         return jsonify({"error": _friendly_error(exc)}), 500
 
 
+@app.post("/api/flight-return-options")
+def create_flight_return_options():
+    try:
+        payload = request.get_json(force=True)
+        if not isinstance(payload, dict):
+            raise ValueError("Request body must be a JSON object.")
+        departure_token = _clean_text(payload.get("departure_token"))
+        currency_code = _clean_text(payload.get("currency_code")) or "USD"
+        return jsonify(fetch_return_flight_options(departure_token, currency_code))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"error": _friendly_error(exc)}), 500
+
+
 def _run_crew(travel_inputs: TravelInputs) -> dict[str, Any]:
     try:
         result = _kickoff_planner(travel_inputs)
@@ -382,12 +442,54 @@ def _run_crew(travel_inputs: TravelInputs) -> dict[str, Any]:
                 os.environ["LLM_MODEL"] = original_model
 
 
+def _run_plan_job(job_id: str, travel_inputs: TravelInputs) -> None:
+    try:
+        update_plan_job(job_id, status="collecting", progress="Collecting live provider data in parallel.")
+        if os.getenv("FAST_PLANNER", "true").lower() != "true":
+            update_plan_job(job_id, status="planning", progress="Running the full CrewAI workflow.")
+            result = _run_crew(travel_inputs)
+            update_plan_job(
+                job_id,
+                status="complete",
+                progress="Itinerary complete.",
+                itinerary=str(result.get("itinerary", "")),
+                options=result.get("options", _empty_options()),
+            )
+            return
+
+        trip_data = collect_trip_data(travel_inputs)
+        options = trip_data.get("options", _empty_options())
+        update_plan_job(
+            job_id,
+            status="planning",
+            progress="Provider data ready. Writing the itinerary.",
+            options=options,
+        )
+        itinerary = _generate_fast_itinerary(travel_inputs, trip_data)
+        update_plan_job(
+            job_id,
+            status="complete",
+            progress="Itinerary complete.",
+            itinerary=itinerary,
+            options=options,
+        )
+    except Exception as exc:
+        update_plan_job(job_id, status="failed", progress="Planner failed.", error=_friendly_error(exc))
+
+
 def _kickoff_planner(travel_inputs: TravelInputs) -> dict[str, Any]:
     if os.getenv("FAST_PLANNER", "true").lower() != "true":
         crew = build_travel_crew()
         return {"itinerary": str(crew.kickoff(inputs=travel_inputs.as_crew_inputs())), "options": _empty_options()}
 
     trip_data = collect_trip_data(travel_inputs)
+    return {
+        "itinerary": _generate_fast_itinerary(travel_inputs, trip_data),
+        "options": trip_data.get("options", _empty_options()),
+    }
+
+
+def _generate_fast_itinerary(travel_inputs: TravelInputs, trip_data: dict[str, Any]) -> str:
     agent = create_orchestrator_agent()
     task = create_fast_itinerary_task(agent)
     crew = Crew(
@@ -402,10 +504,7 @@ def _kickoff_planner(travel_inputs: TravelInputs) -> dict[str, Any]:
         **travel_inputs.as_crew_inputs(),
         "trip_data": json.dumps(trip_data, ensure_ascii=False, indent=2),
     }
-    return {
-        "itinerary": str(crew.kickoff(inputs=inputs)),
-        "options": trip_data.get("options", _empty_options()),
-    }
+    return str(crew.kickoff(inputs=inputs))
 
 
 def _empty_options() -> dict[str, Any]:

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from dataclasses import asdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from typing import Any
 
 from main import TravelInputs
+from runtime_store import get_cached_response, set_cached_response
 from tools import FlightSearchTool, HotelSearchTool, LocalSearchTool, WeatherForecastTool, normalize_airport_id
 
 NearbyAirports = dict[str, list[dict[str, str]]]
@@ -27,23 +30,83 @@ def collect_trip_data(travel_inputs: TravelInputs) -> dict[str, Any]:
     """Collect live provider data deterministically before CrewAI writes the plan."""
     flight_budget = _budget_slice(travel_inputs.budget, 0.35)
     nightly_hotel_budget = _nightly_budget(travel_inputs.budget, 0.38, travel_inputs.start_date, travel_inputs.end_date)
-    flight_result = FlightSearchTool()._run(
-        origin=travel_inputs.origin,
-        destination=travel_inputs.destination,
-        departure_date=travel_inputs.start_date,
-        return_date=travel_inputs.end_date,
-        adults=travel_inputs.adults,
-        max_price=flight_budget,
-        currency_code=travel_inputs.currency_code,
-    )
-    hotel_result = HotelSearchTool()._run(
-        destination=travel_inputs.destination,
-        check_in_date=travel_inputs.start_date,
-        check_out_date=travel_inputs.end_date,
-        adults=travel_inputs.adults,
-        nightly_budget=nightly_hotel_budget,
-        currency_code=travel_inputs.currency_code,
-    )
+    provider_tasks = {
+        "flights": lambda: _cached_provider_call(
+            provider="flights",
+            ttl_seconds=1800,
+            payload={
+                "origin": travel_inputs.origin,
+                "destination": travel_inputs.destination,
+                "departure_date": travel_inputs.start_date,
+                "return_date": travel_inputs.end_date,
+                "adults": travel_inputs.adults,
+                "max_price": flight_budget,
+                "currency_code": travel_inputs.currency_code,
+            },
+            call=lambda: FlightSearchTool()._run(
+                origin=travel_inputs.origin,
+                destination=travel_inputs.destination,
+                departure_date=travel_inputs.start_date,
+                return_date=travel_inputs.end_date,
+                adults=travel_inputs.adults,
+                max_price=flight_budget,
+                currency_code=travel_inputs.currency_code,
+            ),
+        ),
+        "hotels": lambda: _cached_provider_call(
+            provider="hotels",
+            ttl_seconds=3600,
+            payload={
+                "destination": travel_inputs.destination,
+                "check_in_date": travel_inputs.start_date,
+                "check_out_date": travel_inputs.end_date,
+                "adults": travel_inputs.adults,
+                "nightly_budget": nightly_hotel_budget,
+                "currency_code": travel_inputs.currency_code,
+            },
+            call=lambda: HotelSearchTool()._run(
+                destination=travel_inputs.destination,
+                check_in_date=travel_inputs.start_date,
+                check_out_date=travel_inputs.end_date,
+                adults=travel_inputs.adults,
+                nightly_budget=nightly_hotel_budget,
+                currency_code=travel_inputs.currency_code,
+            ),
+        ),
+        "weather": lambda: _cached_provider_call(
+            provider="weather",
+            ttl_seconds=7200,
+            payload={
+                "destination": travel_inputs.destination,
+                "start_date": travel_inputs.start_date,
+                "end_date": travel_inputs.end_date,
+            },
+            call=lambda: WeatherForecastTool()._run(
+                destination=travel_inputs.destination,
+                start_date=travel_inputs.start_date,
+                end_date=travel_inputs.end_date,
+            ),
+        ),
+        "local_search": lambda: _cached_provider_call(
+            provider="local_search",
+            ttl_seconds=86400,
+            payload={
+                "destination": travel_inputs.destination,
+                "interests": travel_inputs.interests,
+                "query_type": "attractions restaurants neighborhoods and day trips",
+                "max_results": 8,
+            },
+            call=lambda: LocalSearchTool()._run(
+                destination=travel_inputs.destination,
+                interests=travel_inputs.interests,
+                query_type="attractions restaurants neighborhoods and day trips",
+                max_results=8,
+            ),
+        ),
+    }
+    provider_results = _run_provider_tasks(provider_tasks)
+    flight_result = str(provider_results["flights"])
+    hotel_result = str(provider_results["hotels"])
     flight_options = normalize_flight_options(flight_result)
     hotel_options = normalize_hotel_options(hotel_result)
 
@@ -52,17 +115,8 @@ def collect_trip_data(travel_inputs: TravelInputs) -> dict[str, Any]:
         "provider_results": {
             "flights": flight_result,
             "hotels": hotel_result,
-            "weather": WeatherForecastTool()._run(
-                destination=travel_inputs.destination,
-                start_date=travel_inputs.start_date,
-                end_date=travel_inputs.end_date,
-            ),
-            "local_search": LocalSearchTool()._run(
-                destination=travel_inputs.destination,
-                interests=travel_inputs.interests,
-                query_type="attractions restaurants neighborhoods and day trips",
-                max_results=8,
-            ),
+            "weather": provider_results["weather"],
+            "local_search": provider_results["local_search"],
         },
         "budget_guidance": {
             "estimated_flight_budget": flight_budget,
@@ -78,6 +132,36 @@ def collect_trip_data(travel_inputs: TravelInputs) -> dict[str, Any]:
     }
 
 
+def search_hotel_options_with_budget(travel_inputs: TravelInputs, nightly_budget: float) -> dict[str, Any]:
+    provider_result = _cached_provider_call(
+        provider="hotels",
+        ttl_seconds=3600,
+        payload={
+            "destination": travel_inputs.destination,
+            "check_in_date": travel_inputs.start_date,
+            "check_out_date": travel_inputs.end_date,
+            "adults": travel_inputs.adults,
+            "nightly_budget": nightly_budget,
+            "currency_code": travel_inputs.currency_code,
+        },
+        call=lambda: HotelSearchTool()._run(
+            destination=travel_inputs.destination,
+            check_in_date=travel_inputs.start_date,
+            check_out_date=travel_inputs.end_date,
+            adults=travel_inputs.adults,
+            nightly_budget=nightly_budget,
+            currency_code=travel_inputs.currency_code,
+        ),
+    )
+    hotels = normalize_hotel_options(str(provider_result))
+    return {
+        "hotels": hotels,
+        "map_center": calculate_map_center(hotels),
+        "message": f"Updated hotel options with a nightly budget near {travel_inputs.currency_code} {nightly_budget:.0f}.",
+        "provider_result": provider_result,
+    }
+
+
 def build_options_payload(
     travel_inputs: TravelInputs,
     hotels: list[dict[str, Any]],
@@ -90,6 +174,36 @@ def build_options_payload(
         "flight_recovery": build_flight_recovery(travel_inputs, flights, flight_provider_result),
         "map_center": calculate_map_center(hotels),
     }
+
+
+def _run_provider_tasks(tasks: dict[str, Any]) -> dict[str, str]:
+    results: dict[str, str] = {}
+    max_workers = max(1, min(len(tasks), 4))
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(task): name for name, task in tasks.items()}
+        for future in as_completed(futures):
+            name = futures[future]
+            try:
+                results[name] = str(future.result())
+            except Exception as exc:
+                results[name] = f"{name.replace('_', ' ').title()} failed: {exc}"
+    return results
+
+
+def _cached_provider_call(provider: str, ttl_seconds: int, payload: dict[str, Any], call: Any) -> str:
+    cache_key = _cache_key(provider, payload)
+    cached = get_cached_response(cache_key)
+    if isinstance(cached, str):
+        return cached
+    result = str(call())
+    set_cached_response(cache_key, provider, result, ttl_seconds)
+    return result
+
+
+def _cache_key(provider: str, payload: dict[str, Any]) -> str:
+    encoded = json.dumps(payload, sort_keys=True, default=str)
+    digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+    return f"{provider}:{digest}"
 
 
 def normalize_hotel_options(provider_result: str) -> list[dict[str, Any]]:

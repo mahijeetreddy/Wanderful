@@ -28,6 +28,15 @@ type PlanResponse = {
   error?: string;
 };
 
+type PlanJob = {
+  id: string;
+  status: "queued" | "collecting" | "planning" | "complete" | "failed";
+  progress: string;
+  options?: PlannerOptions;
+  itinerary?: string;
+  error?: string;
+};
+
 type ResultTab = "itinerary" | "hotels" | "flights" | "raw";
 
 type PlannerOptions = {
@@ -191,6 +200,7 @@ function App() {
   const [form, setForm] = useState<PlannerForm>(initialForm);
   const [loading, setLoading] = useState(false);
   const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
+  const [jobProgress, setJobProgress] = useState("");
   const [error, setError] = useState("");
   const [itinerary, setItinerary] = useState("");
   const [options, setOptions] = useState<PlannerOptions>(emptyOptions);
@@ -380,25 +390,54 @@ function App() {
     setItinerary("");
     setOptions(emptyOptions);
     setLoadingMessageIndex(0);
+    setJobProgress("Starting trip planning job.");
 
     try {
-      const response = await fetch("/api/plan", {
+      const response = await fetch("/api/plan-jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(form),
       });
-      const payload = await parsePlanResponse(response);
+      const payload = await parsePlanResponse(response) as PlanResponse & { job_id?: string; job?: PlanJob };
       if (!response.ok) {
         throw new Error(payload.error || "Planner request failed.");
       }
-      setItinerary(payload.itinerary || "");
-      setOptions(normalizeOptions(payload.options));
+      if (!payload.job_id) {
+        throw new Error("Planner did not return a job id.");
+      }
+      await pollPlanJob(payload.job_id);
       setResultTab("itinerary");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Planner request failed.");
     } finally {
       setLoading(false);
+      setJobProgress("");
     }
+  };
+
+  const pollPlanJob = async (jobId: string) => {
+    const maxPolls = 240;
+    for (let attempt = 0; attempt < maxPolls; attempt += 1) {
+      await wait(attempt < 4 ? 900 : 1600);
+      const response = await fetch(`/api/plan-jobs/${jobId}`);
+      const payload = await parsePlanResponse(response) as PlanResponse & { job?: PlanJob };
+      if (!response.ok || !payload.job) {
+        throw new Error(payload.error || "Could not read planner job status.");
+      }
+      const job = payload.job;
+      setJobProgress(job.progress || job.status);
+      if (job.options) {
+        setOptions(normalizeOptions(job.options));
+      }
+      if (job.status === "complete") {
+        setItinerary(job.itinerary || "");
+        return;
+      }
+      if (job.status === "failed") {
+        throw new Error(job.error || "Planner job failed.");
+      }
+    }
+    throw new Error("Planner job timed out. Try a shorter trip or check provider/LLM quotas.");
   };
 
   const copyItinerary = async () => {
@@ -490,13 +529,15 @@ function App() {
         fetch("/api/preferences"),
       ]);
       if (tripsResponse.ok) {
-        const payload = await tripsResponse.json() as { trips: SavedTrip[] };
+        const payload = await parsePlanResponse(tripsResponse) as PlanResponse & { trips?: SavedTrip[] };
         setSavedTrips(Array.isArray(payload.trips) ? payload.trips : []);
       }
       if (preferencesResponse.ok) {
-        const payload = await preferencesResponse.json() as { preferences: UserPreferences };
-        setPreferences(payload.preferences);
-        applyPreferencesToForm(payload.preferences);
+        const payload = await parsePlanResponse(preferencesResponse) as PlanResponse & { preferences?: UserPreferences };
+        if (payload.preferences) {
+          setPreferences(payload.preferences);
+          applyPreferencesToForm(payload.preferences);
+        }
       }
     } catch {
       setError("Could not load account workspace.");
@@ -510,7 +551,7 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(trip),
       });
-      const payload = await response.json() as { trip?: SavedTrip; error?: string };
+      const payload = await parsePlanResponse(response) as PlanResponse & { trip?: SavedTrip };
       if (!response.ok || !payload.trip) {
         throw new Error(payload.error || "Could not save trip.");
       }
@@ -554,8 +595,10 @@ function App() {
       body: JSON.stringify(nextPreferences),
     });
     if (response.ok) {
-      const payload = await response.json() as { preferences: UserPreferences };
-      setPreferences(payload.preferences);
+      const payload = await parsePlanResponse(response) as PlanResponse & { preferences?: UserPreferences };
+      if (payload.preferences) {
+        setPreferences(payload.preferences);
+      }
     }
   };
 
@@ -574,8 +617,8 @@ function App() {
   const refreshAuthUser = async () => {
     try {
       const response = await fetch("/api/auth/me");
-      const payload = await response.json() as { user: AuthUser | null };
-      setAuthUser(payload.user);
+      const payload = await parsePlanResponse(response) as PlanResponse & { user?: AuthUser | null };
+      setAuthUser(payload.user || null);
     } catch {
       setAuthUser(null);
     }
@@ -765,29 +808,35 @@ function App() {
                 {loading ? <Loader2 className="animate-spin" size={18} /> : <ArrowDown size={18} />}
                 {loading ? loadingMessages[loadingMessageIndex] : "Generate my Wanderful itinerary"}
               </button>
+              {loading && jobProgress ? (
+                <p className="mt-3 rounded-2xl border border-white/10 bg-white/[0.055] px-3 py-2 text-sm leading-relaxed text-white/62">
+                  {jobProgress}
+                </p>
+              ) : null}
 
               {error && <div className="mt-4 rounded-3xl border border-red-300/20 bg-red-500/15 px-4 py-3 text-sm leading-relaxed text-red-50">{error}</div>}
             </form>
           </div>
 
-          {itinerary && (
+          {(itinerary || hasAnyOptions(options)) && (
             <section className="liquid-glass mx-auto mt-6 max-w-6xl rounded-[32px] p-5 sm:p-7">
               <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <p className="text-[11px] font-medium tracking-[0.18em] text-white/55">FINAL ITINERARY</p>
-                  <h3 className="mt-2 text-2xl font-medium text-white">Your Wanderful plan</h3>
+                  <p className="text-[11px] font-medium tracking-[0.18em] text-white/55">{itinerary ? "FINAL ITINERARY" : "LIVE TRIP OPTIONS"}</p>
+                  <h3 className="mt-2 text-2xl font-medium text-white">{itinerary ? "Your Wanderful plan" : "Provider data is ready"}</h3>
                 </div>
-                <div className="flex gap-2">
+                {itinerary ? <div className="flex gap-2">
                   <button onClick={copyItinerary} className="action-button" type="button"><Copy size={15} /> Copy</button>
                   <button onClick={saveCurrentTrip} className="action-button" type="button"><FileText size={15} /> Save</button>
                   <button onClick={downloadItinerary} className="action-button" type="button"><Download size={15} /> Download</button>
                   <button onClick={resetPlan} className="action-button" type="button"><RotateCcw size={15} /> New Trip</button>
-                </div>
+                </div> : null}
               </div>
               <ItineraryResult
                 form={form}
                 itinerary={itinerary}
                 options={options}
+                onOptionsChange={setOptions}
                 activeTab={resultTab}
                 onTabChange={setResultTab}
               />
@@ -839,19 +888,38 @@ function App() {
 
 async function parsePlanResponse(response: Response): Promise<PlanResponse> {
   const text = await response.text();
+  const contentType = response.headers.get("content-type") || "";
   if (!text.trim()) {
     return {
-      error: `Planner API returned an empty response with status ${response.status}. Check that Flask is running and Vite is proxying to the correct port.`,
+      error: `API returned an empty response with status ${response.status}. Check that Flask is running and Vite is proxying to the correct port.`,
     };
   }
 
   try {
     return JSON.parse(text) as PlanResponse;
   } catch {
+    const looksLikeHtml = contentType.includes("text/html") || /^\s*</.test(text);
     return {
-      error: `Planner API returned non-JSON response with status ${response.status}: ${text.slice(0, 240)}`,
+      error: looksLikeHtml
+        ? `API returned HTML instead of JSON with status ${response.status}. This usually means the Flask API is not running on the Vite proxy target, or the request hit the frontend fallback route. Restart Flask on port 5052 and hard refresh.`
+        : `API returned non-JSON response with status ${response.status}: ${text.slice(0, 240)}`,
     };
   }
+}
+
+function useEscapeToClose(active: boolean, onClose: () => void) {
+  useEffect(() => {
+    if (!active) {
+      return undefined;
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [active, onClose]);
 }
 
 function InfoSections() {
@@ -899,6 +967,10 @@ function InfoCard({ title, text }: { title: string; text: string }) {
   );
 }
 
+function wait(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
 function AuthModal({
   open,
   mode,
@@ -917,6 +989,7 @@ function AuthModal({
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  useEscapeToClose(open, onClose);
 
   if (!open) {
     return null;
@@ -932,7 +1005,7 @@ function AuthModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, email, password }),
       });
-      const payload = await response.json() as { user?: AuthUser; error?: string };
+      const payload = await parsePlanResponse(response) as PlanResponse & { user?: AuthUser };
       if (!response.ok || !payload.user) {
         throw new Error(payload.error || "Authentication failed.");
       }
@@ -1055,6 +1128,7 @@ function ProfileModal({
   const [passwordStatus, setPasswordStatus] = useState("");
   const [savingProfile, setSavingProfile] = useState(false);
   const [savingPassword, setSavingPassword] = useState(false);
+  useEscapeToClose(open && Boolean(user), onClose);
 
   useEffect(() => {
     if (!open) {
@@ -1097,7 +1171,7 @@ function ProfileModal({
           dislikes: splitPreferenceList(profileForm.dislikes),
         }),
       });
-      const payload = await response.json() as { preferences?: UserPreferences; error?: string };
+      const payload = await parsePlanResponse(response) as PlanResponse & { preferences?: UserPreferences };
       if (!response.ok || !payload.preferences) {
         throw new Error(payload.error || "Could not save profile.");
       }
@@ -1120,7 +1194,7 @@ function ProfileModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(passwordForm),
       });
-      const payload = await response.json() as { ok?: boolean; error?: string };
+      const payload = await parsePlanResponse(response) as PlanResponse & { ok?: boolean };
       if (!response.ok || !payload.ok) {
         throw new Error(payload.error || "Could not change password.");
       }
@@ -1299,12 +1373,14 @@ function ItineraryResult({
   form,
   itinerary,
   options,
+  onOptionsChange,
   activeTab,
   onTabChange,
 }: {
   form: PlannerForm;
   itinerary: string;
   options: PlannerOptions;
+  onOptionsChange: (options: PlannerOptions) => void;
   activeTab: ResultTab;
   onTabChange: (tab: ResultTab) => void;
 }) {
@@ -1365,9 +1441,17 @@ function ItineraryResult({
 
       {activeTab === "itinerary" ? (
         <div className="space-y-5 p-4 sm:p-5">
-          <DayTimeline itinerary={itinerary} fallbackStartDate={form.start_date} />
+          {itinerary ? (
+            <DayTimeline itinerary={itinerary} fallbackStartDate={form.start_date} fallbackEndDate={form.end_date} />
+          ) : (
+            <EmptyResult
+              icon={<Loader2 className="animate-spin" size={18} />}
+              title="Itinerary is being written"
+              text="Flights, hotels, map data, and recovery controls are available in the other tabs while the LLM finishes the final plan."
+            />
+          )}
 
-          <article className="itinerary-markdown max-h-[620px] overflow-auto rounded-[26px] border border-white/12 bg-black/68 p-5 sm:p-7">
+          {itinerary ? <article className="itinerary-markdown max-h-[620px] overflow-auto rounded-[26px] border border-white/12 bg-black/68 p-5 sm:p-7">
             <div className="mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-4">
               <div>
                 <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/45">Detailed Plan</p>
@@ -1390,12 +1474,17 @@ function ItineraryResult({
             >
               {itinerary}
             </ReactMarkdown>
-          </article>
+          </article> : null}
         </div>
       ) : null}
 
       {activeTab === "hotels" ? (
-        <HotelMapPanel hotels={options.hotels} mapCenter={options.map_center} />
+        <HotelMapPanel
+          form={form}
+          hotels={options.hotels}
+          mapCenter={options.map_center}
+          onHotelsUpdated={(hotels, mapCenter) => onOptionsChange({ ...options, hotels, map_center: mapCenter })}
+        />
       ) : null}
 
       {activeTab === "flights" ? (
@@ -1411,8 +1500,21 @@ function ItineraryResult({
   );
 }
 
-function HotelMapPanel({ hotels, mapCenter }: { hotels: HotelOption[]; mapCenter: Coordinates | null }) {
+function HotelMapPanel({
+  form,
+  hotels,
+  mapCenter,
+  onHotelsUpdated,
+}: {
+  form: PlannerForm;
+  hotels: HotelOption[];
+  mapCenter: Coordinates | null;
+  onHotelsUpdated: (hotels: HotelOption[], mapCenter: Coordinates | null) => void;
+}) {
   const [selectedHotelId, setSelectedHotelId] = useState(hotels[0]?.id || "");
+  const [nightlyBudget, setNightlyBudget] = useState(() => inferInitialNightlyBudget(form));
+  const [hotelStatus, setHotelStatus] = useState("");
+  const [hotelLoading, setHotelLoading] = useState(false);
   const hotelsWithCoordinates = hotels.filter((hotel) => hotel.coordinates);
   const selectedHotel = hotels.find((hotel) => hotel.id === selectedHotelId) || hotels[0];
   const center = selectedHotel?.coordinates || mapCenter || hotelsWithCoordinates[0]?.coordinates || { lat: 39.5, lng: -98.35 };
@@ -1420,6 +1522,33 @@ function HotelMapPanel({ hotels, mapCenter }: { hotels: HotelOption[]; mapCenter
   useEffect(() => {
     setSelectedHotelId(hotels[0]?.id || "");
   }, [hotels]);
+
+  const refreshHotels = async () => {
+    setHotelLoading(true);
+    setHotelStatus("");
+    try {
+      const response = await fetch("/api/hotel-options", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...form, nightly_budget: nightlyBudget }),
+      });
+      const payload = await parsePlanResponse(response) as PlanResponse & {
+        hotels?: HotelOption[];
+        map_center?: Coordinates | null;
+        message?: string;
+      };
+      if (!response.ok) {
+        throw new Error(payload.error || "Could not update hotel options.");
+      }
+      const nextHotels = Array.isArray(payload.hotels) ? payload.hotels : [];
+      onHotelsUpdated(nextHotels, payload.map_center || null);
+      setHotelStatus(payload.message || "Hotel options updated.");
+    } catch (caught) {
+      setHotelStatus(caught instanceof Error ? caught.message : "Could not update hotel options.");
+    } finally {
+      setHotelLoading(false);
+    }
+  };
 
   if (!hotels.length) {
     return (
@@ -1451,6 +1580,37 @@ function HotelMapPanel({ hotels, mapCenter }: { hotels: HotelOption[]; mapCenter
             <StatPill label="Options" value={String(hotels.length)} />
             <StatPill label="Mapped" value={String(hotelsWithCoordinates.length)} />
             <StatPill label="Selected" value={selectedHotel?.nightly_rate || selectedHotel?.hotel_class || "Ready"} />
+          </div>
+          <div className="mt-5 rounded-[22px] border border-white/10 bg-black/35 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/42">Nightly Price Filter</p>
+                <p className="mt-1 text-lg font-medium text-white">{form.currency_code || "USD"} {nightlyBudget}</p>
+              </div>
+              <button
+                type="button"
+                onClick={refreshHotels}
+                disabled={hotelLoading}
+                className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2.5 text-sm font-medium text-black transition hover:scale-[1.01] disabled:opacity-60"
+              >
+                {hotelLoading ? <Loader2 className="animate-spin" size={14} /> : <Search size={14} />}
+                Search
+              </button>
+            </div>
+            <input
+              type="range"
+              min="50"
+              max="1200"
+              step="25"
+              value={nightlyBudget}
+              onChange={(event) => setNightlyBudget(Number(event.target.value))}
+              className="mt-4 w-full accent-white"
+            />
+            <div className="mt-2 flex justify-between text-[11px] text-white/38">
+              <span>{form.currency_code || "USD"} 50</span>
+              <span>{form.currency_code || "USD"} 1200+</span>
+            </div>
+            {hotelStatus ? <p className="mt-3 text-sm leading-relaxed text-white/56">{hotelStatus}</p> : null}
           </div>
         </div>
         {hotels.map((hotel) => (
@@ -1885,20 +2045,32 @@ function FlightDetailModal({
   onClose: () => void;
 }) {
   const [bookingOptions, setBookingOptions] = useState<FlightBookingOption[]>([]);
+  const [returnOptions, setReturnOptions] = useState<FlightOption[]>([]);
+  const [activeFlight, setActiveFlight] = useState<FlightOption | null>(flight);
   const [bookingStatus, setBookingStatus] = useState("");
+  const [returnStatus, setReturnStatus] = useState("");
+  const [selectedReturnId, setSelectedReturnId] = useState("");
   const [loadingBookings, setLoadingBookings] = useState(false);
+  const [loadingReturns, setLoadingReturns] = useState(false);
+  useEscapeToClose(Boolean(flight), onClose);
 
   useEffect(() => {
+    if (flight) {
+      setActiveFlight(flight);
+    }
     setBookingOptions([]);
     setBookingStatus("");
+    setReturnOptions([]);
+    setReturnStatus("");
+    setSelectedReturnId("");
   }, [flight?.id]);
 
-  if (!flight) {
+  if (!flight || !activeFlight) {
     return null;
   }
 
   const loadBookingOptions = async () => {
-    if (!flight.booking_token) {
+    if (!activeFlight.booking_token) {
       setBookingStatus("This flight result did not include a booking token. Open Google Flights to continue.");
       return;
     }
@@ -1908,7 +2080,7 @@ function FlightDetailModal({
       const response = await fetch("/api/flight-booking-options", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ booking_token: flight.booking_token, currency_code: currencyCode || "USD" }),
+        body: JSON.stringify({ booking_token: activeFlight.booking_token, currency_code: currencyCode || "USD" }),
       });
       const payload = await parsePlanResponse(response) as {
         booking_options?: FlightBookingOption[];
@@ -1930,6 +2102,53 @@ function FlightDetailModal({
     }
   };
 
+  const loadReturnOptions = async () => {
+    if (!activeFlight.departure_token) {
+      setReturnStatus("This flight result did not include a departure token. Open Google Flights to choose the return leg.");
+      return;
+    }
+    setLoadingReturns(true);
+    setReturnStatus("");
+    setBookingOptions([]);
+    setBookingStatus("");
+    try {
+      const response = await fetch("/api/flight-return-options", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ departure_token: activeFlight.departure_token, currency_code: currencyCode || "USD" }),
+      });
+      const payload = await parsePlanResponse(response) as {
+        return_options?: FlightOption[];
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(payload.error || "Could not load return flight options.");
+      }
+      const options = Array.isArray(payload.return_options) ? payload.return_options : [];
+      setReturnOptions(options);
+      setReturnStatus(
+        options.length
+          ? "Choose a return option below, then load booking options."
+          : "SerpAPI did not return return-flight choices for this token. Open Google Flights to continue."
+      );
+      if (options.length === 1) {
+        setActiveFlight(mergeFlightLegs(flight, options[0]));
+        setSelectedReturnId(options[0].id);
+      }
+    } catch (caught) {
+      setReturnStatus(caught instanceof Error ? caught.message : "Could not load return flight options.");
+    } finally {
+      setLoadingReturns(false);
+    }
+  };
+
+  const selectReturnOption = (option: FlightOption) => {
+    setActiveFlight(mergeFlightLegs(flight, option));
+    setSelectedReturnId(option.id);
+    setBookingOptions([]);
+    setBookingStatus(option.booking_token ? "Return selected. Booking options are ready to load." : "Return selected, but no booking token was returned.");
+  };
+
   return (
     <div className="fixed inset-0 z-[90] grid place-items-center bg-black/70 px-4 backdrop-blur-md" onClick={onClose}>
       <article
@@ -1939,12 +2158,12 @@ function FlightDetailModal({
         <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/45">Flight Details</p>
-            <h3 className="mt-2 text-3xl font-medium tracking-[-0.05em] text-white sm:text-5xl">{formatFlightPrice(flight)}</h3>
+            <h3 className="mt-2 text-3xl font-medium tracking-[-0.05em] text-white sm:text-5xl">{formatFlightPrice(activeFlight)}</h3>
             <div className="mt-3 flex flex-wrap gap-2 text-xs text-white/66">
-              <span className="rounded-full border border-white/10 bg-white/[0.07] px-3 py-1.5">{formatFlightDuration(flight.total_duration_minutes)}</span>
-              <span className="rounded-full border border-white/10 bg-white/[0.07] px-3 py-1.5">{getFlightAirlines(flight)}</span>
+              <span className="rounded-full border border-white/10 bg-white/[0.07] px-3 py-1.5">{formatFlightDuration(activeFlight.total_duration_minutes)}</span>
+              <span className="rounded-full border border-white/10 bg-white/[0.07] px-3 py-1.5">{getFlightAirlines(activeFlight)}</span>
               <span className="rounded-full border border-white/10 bg-white/[0.07] px-3 py-1.5">
-                {flight.has_return_details ? "Return details included" : "Return selection may still be required"}
+                {activeFlight.has_return_details ? "Return details included" : "Return selection may still be required"}
               </span>
             </div>
           </div>
@@ -1953,23 +2172,23 @@ function FlightDetailModal({
           </button>
         </div>
 
-        {!flight.has_return_details ? (
+        {!activeFlight.has_return_details ? (
           <div className="mb-5 rounded-[24px] border border-amber-200/18 bg-amber-200/[0.08] p-4">
             <p className="text-sm font-medium text-white">Return details may be incomplete</p>
             <p className="mt-2 text-sm leading-relaxed text-white/62">
               Google Flights sometimes returns the outbound leg first and provides a departure token for selecting return flights. This app keeps the result visible, but final verification should happen in Google Flights or a booking provider before purchase.
             </p>
-            {flight.departure_token ? (
+            {activeFlight.departure_token ? (
               <p className="mt-3 break-all rounded-2xl border border-white/10 bg-black/30 px-3 py-2 text-xs text-white/48">
-                departure_token: {flight.departure_token}
+                departure_token: {activeFlight.departure_token}
               </p>
             ) : null}
           </div>
         ) : null}
 
         <div className="grid gap-3">
-          {(flight.segments || []).map((segment, index) => (
-            <div key={`${flight.id}-modal-${index}`} className="rounded-[24px] border border-white/10 bg-white/[0.055] p-4">
+          {(activeFlight.segments || []).map((segment, index) => (
+            <div key={`${activeFlight.id}-modal-${index}`} className="rounded-[24px] border border-white/10 bg-white/[0.055] p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <p className="text-lg font-medium text-white">{segment.airline || "Airline"} {segment.flight_number || ""}</p>
@@ -1990,11 +2209,20 @@ function FlightDetailModal({
           ))}
         </div>
 
-        <div className="mt-6 grid gap-3 sm:grid-cols-2">
+        <div className="mt-6 grid gap-3 sm:grid-cols-3">
+          <button
+            type="button"
+            onClick={loadReturnOptions}
+            disabled={loadingReturns || activeFlight.has_return_details || !activeFlight.departure_token}
+            className="inline-flex items-center justify-center gap-2 rounded-full border border-white/12 bg-white/[0.08] px-4 py-3 text-sm font-medium text-white/82 transition hover:bg-white hover:text-black disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {loadingReturns ? <Loader2 className="animate-spin" size={15} /> : <RotateCcw size={15} />}
+            Select return flight
+          </button>
           <button
             type="button"
             onClick={loadBookingOptions}
-            disabled={loadingBookings || !flight.booking_token}
+            disabled={loadingBookings || !activeFlight.booking_token}
             className="inline-flex items-center justify-center gap-2 rounded-full bg-white px-4 py-3 text-sm font-medium text-black transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-60"
           >
             {loadingBookings ? <Loader2 className="animate-spin" size={15} /> : <Search size={15} />}
@@ -2010,10 +2238,51 @@ function FlightDetailModal({
           </a>
         </div>
 
-        {flight.booking_token ? (
+        {activeFlight.booking_token ? (
           <p className="mt-4 break-all rounded-2xl border border-white/10 bg-black/34 px-3 py-2 text-xs leading-relaxed text-white/48">
-            booking_token: {flight.booking_token}
+            booking_token: {activeFlight.booking_token}
           </p>
+        ) : null}
+
+        {returnStatus ? <p className="mt-4 text-sm leading-relaxed text-white/58">{returnStatus}</p> : null}
+
+        {returnOptions.length ? (
+          <div className="mt-4 rounded-[26px] border border-white/10 bg-white/[0.04] p-4">
+            <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">Return flight options</p>
+            <div className="mt-3 grid gap-3">
+              {returnOptions.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  onClick={() => selectReturnOption(option)}
+                  className={`rounded-[22px] border p-4 text-left transition ${
+                    selectedReturnId === option.id
+                      ? "border-white/50 bg-white/[0.12]"
+                      : "border-white/10 bg-black/24 hover:border-white/24 hover:bg-white/[0.08]"
+                  }`}
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-base font-medium text-white">{getFlightAirlines(option)}</p>
+                      <p className="mt-1 text-sm text-white/56">
+                        {formatFlightDuration(option.total_duration_minutes)} - {formatFlightPrice(option)}
+                      </p>
+                    </div>
+                    <span className="rounded-full border border-white/10 bg-black/30 px-3 py-1 text-xs text-white/58">
+                      {option.booking_token ? "Booking token ready" : "No booking token"}
+                    </span>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {(option.segments || []).map((segment, index) => (
+                      <p key={`${option.id}-segment-${index}`} className="rounded-2xl border border-white/10 bg-black/24 px-3 py-2 text-sm text-white/58">
+                        <span className="text-white/82">{segment.airline || "Airline"}</span> - {segment.from || "?"} to {segment.to || "?"} - {segment.depart_at || "departure TBD"}
+                      </p>
+                    ))}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
         ) : null}
 
         {bookingStatus ? <p className="mt-4 text-sm leading-relaxed text-white/58">{bookingStatus}</p> : null}
@@ -2027,7 +2296,7 @@ function FlightDetailModal({
                     <p className="text-base font-medium text-white">{option.title}</p>
                     {option.description ? <p className="mt-1 text-sm leading-relaxed text-white/54">{option.description}</p> : null}
                   </div>
-                  {option.price ? <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-black">{option.currency || flight.currency || currencyCode} {option.price}</span> : null}
+                  {option.price ? <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-black">{option.currency || activeFlight.currency || currencyCode} {option.price}</span> : null}
                 </div>
                 {option.extensions?.length ? (
                   <div className="mt-3 flex flex-wrap gap-1.5">
@@ -2077,6 +2346,8 @@ function SavedTripsDrawer({
   onDelete: (tripId: string) => void;
   onNewTrip: () => void;
 }) {
+  useEscapeToClose(open, onClose);
+
   if (!open) {
     return null;
   }
@@ -2168,8 +2439,29 @@ function inferBudgetStyle(value: string) {
   return "premium";
 }
 
-function DayTimeline({ itinerary, fallbackStartDate }: { itinerary: string; fallbackStartDate: string }) {
-  const days = extractDayPlans(itinerary, fallbackStartDate);
+function inferInitialNightlyBudget(form: PlannerForm) {
+  const budget = Number(form.budget);
+  const start = new Date(`${form.start_date}T00:00:00`);
+  const end = new Date(`${form.end_date}T00:00:00`);
+  const nights = Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())
+    ? 3
+    : Math.max(1, Math.round((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000)));
+  if (!Number.isFinite(budget) || budget <= 0) {
+    return 250;
+  }
+  return Math.min(1200, Math.max(50, Math.round((budget * 0.38) / nights / 25) * 25));
+}
+
+function DayTimeline({
+  itinerary,
+  fallbackStartDate,
+  fallbackEndDate,
+}: {
+  itinerary: string;
+  fallbackStartDate: string;
+  fallbackEndDate: string;
+}) {
+  const days = extractDayPlans(itinerary, fallbackStartDate, fallbackEndDate);
   const [selectedDay, setSelectedDay] = useState<DayPlan | null>(null);
 
   if (!days.length) {
@@ -2245,6 +2537,8 @@ function DayTimeline({ itinerary, fallbackStartDate }: { itinerary: string; fall
 }
 
 function DayDetailModal({ day, onClose }: { day: DayPlan | null; onClose: () => void }) {
+  useEscapeToClose(Boolean(day), onClose);
+
   if (!day) {
     return null;
   }
@@ -2318,10 +2612,11 @@ function ResultPill({ icon, title, text }: { icon: ReactNode; title: string; tex
   );
 }
 
-function extractDayPlans(markdown: string, fallbackStartDate: string): DayPlan[] {
+function extractDayPlans(markdown: string, fallbackStartDate: string, fallbackEndDate: string): DayPlan[] {
   const lines = markdown.split(/\r?\n/);
   const headingPattern = /^\s{0,3}(?:#{1,5}\s*)?(?:[-*]\s*)?(?:\*\*)?\s*(?:[^\w\s]{0,4}\s*)?(day\s+\d+)\s*(?:[:\-|)]\s*)?(.*?)(?:\*\*)?\s*$/i;
   const parentheticalPattern = /^\s{0,3}(?:#{1,5}\s*)?(?:[-*]\s*)?(?:\*\*)?\s*(.*?)\s*\((day\s+\d+)\)\s*(?:[:\-|]\s*)?(.*?)(?:\*\*)?\s*$/i;
+  const dateHeadingPattern = /^\s{0,3}(?:#{1,5}\s*)?(?:[-*]\s*)?(?:\*\*)?\s*((?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}(?:,\s*\d{4})?|\d{4}-\d{2}-\d{2})\s*(?:[:\-|)]\s*)?(.*?)(?:\*\*)?\s*$/i;
   const sections: Array<{ heading: string; title: string; lines: string[] }> = [];
   let current: { heading: string; title: string; lines: string[] } | null = null;
 
@@ -2339,6 +2634,18 @@ function extractDayPlans(markdown: string, fallbackStartDate: string): DayPlan[]
       };
       continue;
     }
+    const dateMatch = line.match(dateHeadingPattern);
+    if (dateMatch) {
+      if (current) {
+        sections.push(current);
+      }
+      current = {
+        heading: `Day ${sections.length + 1}`,
+        title: cleanMarkdownText(`${dateMatch[1]} ${dateMatch[2] || ""}`) || dateForDay(fallbackStartDate, sections.length),
+        lines: [],
+      };
+      continue;
+    }
     if (current) {
       current.lines.push(line);
     }
@@ -2348,7 +2655,7 @@ function extractDayPlans(markdown: string, fallbackStartDate: string): DayPlan[]
     sections.push(current);
   }
 
-  return sections.slice(0, 14).map((section) => {
+  const parsed = sections.slice(0, 14).map((section) => {
     const cleanLines = section.lines
       .map(cleanMarkdownText)
       .filter((line) => line && !/^#{1,6}\s/.test(line));
@@ -2369,6 +2676,39 @@ function extractDayPlans(markdown: string, fallbackStartDate: string): DayPlan[]
         .slice(0, 16),
     };
   });
+  return parsed.length ? parsed : buildFallbackDayPlans(markdown, fallbackStartDate, fallbackEndDate);
+}
+
+function buildFallbackDayPlans(markdown: string, fallbackStartDate: string, fallbackEndDate: string): DayPlan[] {
+  const dayCount = getTripDayCount(fallbackStartDate, fallbackEndDate);
+  if (!dayCount) {
+    return [];
+  }
+  const candidates = markdown
+    .split(/\r?\n/)
+    .map(cleanMarkdownText)
+    .map((line) => line.replace(/^[-*]\s+/, "").replace(/^\d+\.\s+/, ""))
+    .filter((line) => {
+      if (line.length < 8 || /^#{1,6}\s/.test(line)) {
+        return false;
+      }
+      return /morning|afternoon|evening|breakfast|lunch|dinner|visit|explore|hotel|flight|arrive|depart|activity|restaurant|beach|museum|tour|walk|drive|check/i.test(line);
+    })
+    .slice(0, Math.max(dayCount * 5, dayCount));
+  if (!candidates.length) {
+    return [];
+  }
+  const chunkSize = Math.max(1, Math.ceil(candidates.length / dayCount));
+  return Array.from({ length: dayCount }, (_, index) => {
+    const details = candidates.slice(index * chunkSize, index * chunkSize + chunkSize);
+    return {
+      day: `Day ${index + 1}`,
+      title: dateForDay(fallbackStartDate, index),
+      summary: details[0] || "Planned day",
+      bullets: details.slice(0, 5),
+      details: details.slice(0, 12),
+    };
+  }).filter((day) => day.details.length);
 }
 
 function cleanMarkdownText(value: string) {
@@ -2396,6 +2736,16 @@ function dateForDay(startDate: string, index: number) {
   return new Intl.DateTimeFormat("en", { weekday: "short", month: "short", day: "numeric" }).format(date);
 }
 
+function getTripDayCount(startDate: string, endDate: string) {
+  const start = new Date(`${startDate}T00:00:00`);
+  const end = new Date(`${endDate}T00:00:00`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) {
+    return 0;
+  }
+  const dayMs = 24 * 60 * 60 * 1000;
+  return Math.min(14, Math.max(1, Math.round((end.getTime() - start.getTime()) / dayMs) + 1));
+}
+
 function normalizeOptions(options?: PlannerOptions): PlannerOptions {
   return {
     hotels: Array.isArray(options?.hotels) ? options.hotels : [],
@@ -2403,6 +2753,10 @@ function normalizeOptions(options?: PlannerOptions): PlannerOptions {
     flight_recovery: Array.isArray(options?.flight_recovery) ? options.flight_recovery : [],
     map_center: options?.map_center || null,
   };
+}
+
+function hasAnyOptions(options: PlannerOptions) {
+  return Boolean(options.hotels.length || options.flights.length || options.flight_recovery.length || options.map_center);
 }
 
 function formatHotelMeta(hotel: HotelOption) {
@@ -2448,6 +2802,21 @@ function getFlightAirlines(flight: FlightOption) {
     new Set((flight.segments || []).map((segment) => segment.airline).filter(Boolean) as string[])
   );
   return airlines.length ? airlines.slice(0, 3).join(", ") : "Airline TBD";
+}
+
+function mergeFlightLegs(outbound: FlightOption, returnOption: FlightOption): FlightOption {
+  return {
+    ...outbound,
+    ...returnOption,
+    id: `${outbound.id}-${returnOption.id}`,
+    segments: [...(outbound.segments || []), ...(returnOption.segments || [])],
+    total_price: returnOption.total_price ?? outbound.total_price,
+    currency: returnOption.currency || outbound.currency,
+    booking_token: returnOption.booking_token || outbound.booking_token,
+    departure_token: returnOption.departure_token || outbound.departure_token,
+    has_return_details: true,
+    reference: returnOption.reference || outbound.reference,
+  };
 }
 
 function buildGoogleFlightsUrl(search: { origin: string; destination: string; start_date: string; end_date: string }) {
