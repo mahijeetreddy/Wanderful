@@ -1,0 +1,45 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: wanderful
+      POSTGRES_USER: wanderful
+      POSTGRES_PASSWORD: wanderful
+    ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wanderful"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  api:
+    build: .
+    command: sh -c "alembic upgrade head && gunicorn --bind 0.0.0.0:5052 --workers 2 --threads 4 --timeout 120 web_app:app"
+    env_file: .env
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgresql+psycopg://wanderful:wanderful@postgres:5432/wanderful
+      REDIS_URL: redis://redis:6379/0
+      PORT: 5052
+    ports: ["5052:5052"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+  worker:
+    build: .
+    command: python worker.py
+    env_file: .env
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgresql+psycopg://wanderful:wanderful@postgres:5432/wanderful
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }

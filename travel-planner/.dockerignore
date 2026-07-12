@@ -1,0 +1,10 @@
+.git
+.env
+.crewai_runtime
+node_modules
+dist
+__pycache__
+*.pyc
+*.log
+htmlcov
+.pytest_cache

@@ -1,0 +1,5 @@
+# Local AI coding assistant tooling/skill caches - not part of the project
+.agents/
+.claude/
+.goose/
+skills-lock.json

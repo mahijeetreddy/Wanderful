@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Type
@@ -283,6 +283,7 @@ class FlightSearchTool(BaseTool):
                     },
                     "source": "SerpAPI Google Flights",
                     "search_metadata": payload.get("search_metadata", {}),
+                    "price_insights": payload.get("price_insights", {}),
                     "offers": summaries,
                 }
             )
@@ -413,11 +414,14 @@ class HotelSearchInput(BaseModel):
     currency_code: str = Field("USD", min_length=3, max_length=3)
 
 
+MAX_HOTEL_RESULTS = 6
+
+
 class HotelSearchTool(BaseTool):
     name: str = "Live Hotel Search"
     description: str = (
-        "Finds hotel options and prices using SerpAPI Google Hotels. Returns three "
-        "distinct accommodation options when provider inventory is available."
+        "Finds hotel options and prices using SerpAPI Google Hotels. Returns up to "
+        f"{MAX_HOTEL_RESULTS} accommodation options when provider inventory is available."
     )
     args_schema: Type[BaseModel] = HotelSearchInput
 
@@ -463,6 +467,8 @@ class HotelSearchTool(BaseTool):
                 if nightly_budget is not None and isinstance(extracted_rate, (int, float)):
                     if extracted_rate > nightly_budget:
                         continue
+                images = hotel_offer.get("images") or []
+                first_image = images[0] if isinstance(images, list) and images else {}
                 summaries.append(
                     {
                         "property_token": hotel_offer.get("property_token"),
@@ -482,17 +488,27 @@ class HotelSearchTool(BaseTool):
                         "amenities": hotel_offer.get("amenities", [])[:8],
                         "link": hotel_offer.get("link"),
                         "gps_coordinates": hotel_offer.get("gps_coordinates"),
+                        "image_thumbnail": first_image.get("thumbnail"),
+                        "image_url": first_image.get("original_image"),
                         "reference": "Use property_token for deeper Google Hotels details through SerpAPI.",
                     }
                 )
-                if len(summaries) == 3:
-                    break
 
             if not summaries:
                 return (
                     "No priced hotel offers matched the requested dates and nightly budget. "
                     "Try a higher budget, different dates, or a broader destination query."
                 )
+            def _sort_key(item: dict[str, Any]) -> tuple[float, float]:
+                rating = item.get("rating")
+                reviews = item.get("reviews")
+                return (
+                    -rating if isinstance(rating, (int, float)) else 0.0,
+                    -reviews if isinstance(reviews, (int, float)) else 0.0,
+                )
+
+            summaries.sort(key=_sort_key)
+            summaries = summaries[:MAX_HOTEL_RESULTS]
             return _compact_json(
                 {
                     "destination": destination,
@@ -582,12 +598,22 @@ class WeatherForecastTool(BaseTool):
                     for entry in day_entries
                     if entry.get("weather")
                 ]
+                condition_groups = [
+                    entry.get("weather", [{}])[0].get("main")
+                    for entry in day_entries
+                    if entry.get("weather")
+                ]
+                dominant_group = Counter(filter(None, condition_groups)).most_common(1)
                 summaries.append(
                     {
                         "date": day,
                         "temperature_range": f"{min(temps):.0f} to {max(temps):.0f}" if temps else "unknown",
+                        "temp_high": round(max(temps), 1) if temps else None,
+                        "temp_low": round(min(temps), 1) if temps else None,
                         "max_precip_probability": f"{max(pops) * 100:.0f}%" if pops else "unknown",
+                        "precip_probability": round(max(pops) * 100) if pops else None,
                         "common_conditions": sorted(set(filter(None, descriptions)))[:4],
+                        "condition_group": dominant_group[0][0] if dominant_group else None,
                     }
                 )
 

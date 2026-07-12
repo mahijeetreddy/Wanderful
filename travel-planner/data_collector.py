@@ -8,6 +8,8 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from main import TravelInputs
+from ranking import rank_flights, rank_hotels, score_activity
+from reliability import increment_metric, provider_call
 from runtime_store import get_cached_response, set_cached_response
 from tools import FlightSearchTool, HotelSearchTool, LocalSearchTool, WeatherForecastTool, normalize_airport_id
 
@@ -109,6 +111,9 @@ def collect_trip_data(travel_inputs: TravelInputs) -> dict[str, Any]:
     hotel_result = str(provider_results["hotels"])
     flight_options = normalize_flight_options(flight_result)
     hotel_options = normalize_hotel_options(hotel_result)
+    map_center = calculate_map_center(hotel_options)
+    flight_options = rank_flights(flight_options, flight_budget)
+    hotel_options = rank_hotels(hotel_options, nightly_hotel_budget, travel_inputs.interests, map_center)
 
     return {
         "inputs": asdict(travel_inputs),
@@ -128,6 +133,7 @@ def collect_trip_data(travel_inputs: TravelInputs) -> dict[str, Any]:
             hotels=hotel_options,
             flights=flight_options,
             flight_provider_result=flight_result,
+            weather_provider_result=str(provider_results["weather"]),
         ),
     }
 
@@ -154,12 +160,64 @@ def search_hotel_options_with_budget(travel_inputs: TravelInputs, nightly_budget
         ),
     )
     hotels = normalize_hotel_options(str(provider_result))
+    map_center = calculate_map_center(hotels)
+    hotels = rank_hotels(hotels, nightly_budget, travel_inputs.interests, map_center)
     return {
         "hotels": hotels,
-        "map_center": calculate_map_center(hotels),
+        "map_center": map_center,
         "message": f"Updated hotel options with a nightly budget near {travel_inputs.currency_code} {nightly_budget:.0f}.",
         "provider_result": provider_result,
     }
+
+
+def search_activity_alternatives(
+    travel_inputs: TravelInputs,
+    period: str,
+    weather_note: str,
+    exclude_titles: list[str],
+) -> dict[str, Any]:
+    query_type = f"{period} attractions restaurants and experiences"
+    provider_result = _cached_provider_call(
+        provider="activity_alternatives",
+        ttl_seconds=86400,
+        payload={
+            "destination": travel_inputs.destination,
+            "interests": travel_inputs.interests,
+            "query_type": query_type,
+        },
+        call=lambda: LocalSearchTool()._run(
+            destination=travel_inputs.destination,
+            interests=travel_inputs.interests,
+            query_type=query_type,
+            max_results=10,
+        ),
+    )
+    payload = _maybe_json_object(str(provider_result))
+    results = payload.get("results", []) if isinstance(payload.get("results"), list) else []
+    excluded = {title.strip().lower() for title in exclude_titles}
+    alternatives: list[dict[str, Any]] = []
+    daily_budget = max(1.0, float(travel_inputs.budget) * 0.06 / max(1, _trip_nights(travel_inputs) + 1))
+    for index, result in enumerate(results):
+        if not isinstance(result, dict):
+            continue
+        title = str(result.get("title") or "").strip()
+        if not title or title.lower() in excluded:
+            continue
+        activity = {
+            "id": f"alternative-{index + 1}",
+            "time": "",
+            "period": period or "activity",
+            "title": title,
+            "description": result.get("snippet") or "",
+            "location": travel_inputs.destination,
+            "estimated_cost": 0,
+            "indoor": False,
+            "source_url": result.get("link") or "",
+        }
+        score, reasons = score_activity(activity, travel_inputs.interests, weather_note, daily_budget)
+        alternatives.append({**activity, "rank_score": score, "rank_reasons": reasons})
+    alternatives.sort(key=lambda item: item["rank_score"], reverse=True)
+    return {"alternatives": alternatives[:6], "provider_result": provider_result}
 
 
 def build_options_payload(
@@ -167,13 +225,50 @@ def build_options_payload(
     hotels: list[dict[str, Any]],
     flights: list[dict[str, Any]],
     flight_provider_result: str,
+    weather_provider_result: str = "",
 ) -> dict[str, Any]:
     return {
         "hotels": hotels,
         "flights": flights,
         "flight_recovery": build_flight_recovery(travel_inputs, flights, flight_provider_result),
         "map_center": calculate_map_center(hotels),
+        "price_insights": extract_price_insights(flight_provider_result),
+        "weather": normalize_weather(weather_provider_result),
     }
+
+
+def normalize_weather(provider_result: str) -> dict[str, Any] | None:
+    payload = _maybe_json_object(provider_result)
+    daily_forecast = payload.get("daily_forecast")
+    if not isinstance(daily_forecast, list) or not daily_forecast:
+        return None
+    days: list[dict[str, Any]] = []
+    for entry in daily_forecast:
+        if not isinstance(entry, dict) or not entry.get("date"):
+            continue
+        conditions = entry.get("common_conditions")
+        conditions_label = (
+            str(conditions[0]).title() if isinstance(conditions, list) and conditions else None
+        )
+        days.append(
+            {
+                "date": entry.get("date"),
+                "temp_high": entry.get("temp_high"),
+                "temp_low": entry.get("temp_low"),
+                "precip_probability": entry.get("precip_probability"),
+                "condition_group": entry.get("condition_group"),
+                "conditions_label": conditions_label,
+            }
+        )
+    if not days:
+        return None
+    return {"units": payload.get("units") or "imperial", "days": days}
+
+
+def extract_price_insights(flight_provider_result: str) -> dict[str, Any] | None:
+    payload = _maybe_json_object(flight_provider_result)
+    insights = payload.get("price_insights")
+    return insights if isinstance(insights, dict) and insights else None
 
 
 def _run_provider_tasks(tasks: dict[str, Any]) -> dict[str, str]:
@@ -194,8 +289,10 @@ def _cached_provider_call(provider: str, ttl_seconds: int, payload: dict[str, An
     cache_key = _cache_key(provider, payload)
     cached = get_cached_response(cache_key)
     if isinstance(cached, str):
+        increment_metric("cache_hits")
         return cached
-    result = str(call())
+    increment_metric("cache_misses")
+    result = str(provider_call(provider, call))
     set_cached_response(cache_key, provider, result, ttl_seconds)
     return result
 
@@ -231,6 +328,8 @@ def normalize_hotel_options(provider_result: str) -> list[dict[str, Any]]:
                 "amenities": hotel.get("amenities") if isinstance(hotel.get("amenities"), list) else [],
                 "link": hotel.get("link"),
                 "coordinates": coordinates,
+                "image_thumbnail": hotel.get("image_thumbnail"),
+                "image_url": hotel.get("image_url"),
             }
         )
     return normalized
@@ -256,6 +355,7 @@ def normalize_flight_options(provider_result: str) -> list[dict[str, Any]]:
                 "departure_token": offer.get("departure_token"),
                 "booking_token": offer.get("booking_token"),
                 "reference": offer.get("reference"),
+                "carbon_emissions": offer.get("carbon_emissions") if isinstance(offer.get("carbon_emissions"), dict) else None,
                 "segments": flights,
                 "has_return_details": _has_return_details(flights),
             }
@@ -273,7 +373,7 @@ def build_flight_recovery(
         not flights
         or "no flight offers found" in lowered
         or "flight search failed" in lowered
-        or any(not flight.get("has_return_details") for flight in flights)
+        or all(not flight.get("has_return_details") for flight in flights)
     )
     if not weak_result:
         return []
@@ -324,22 +424,37 @@ def calculate_map_center(hotels: list[dict[str, Any]]) -> dict[str, float] | Non
 def search_flight_options_from_instruction(travel_inputs: TravelInputs, instruction: str) -> dict[str, Any]:
     adjusted = apply_flight_instruction(travel_inputs, instruction)
     flight_budget = _budget_slice(adjusted.budget, 0.35)
-    provider_result = FlightSearchTool()._run(
-        origin=adjusted.origin,
-        destination=adjusted.destination,
-        departure_date=adjusted.start_date,
-        return_date=adjusted.end_date,
-        adults=adjusted.adults,
-        max_price=flight_budget,
-        currency_code=adjusted.currency_code,
+    provider_result = _cached_provider_call(
+        provider="flights",
+        ttl_seconds=1800,
+        payload={
+            "origin": adjusted.origin,
+            "destination": adjusted.destination,
+            "departure_date": adjusted.start_date,
+            "return_date": adjusted.end_date,
+            "adults": adjusted.adults,
+            "max_price": flight_budget,
+            "currency_code": adjusted.currency_code,
+        },
+        call=lambda: FlightSearchTool()._run(
+            origin=adjusted.origin,
+            destination=adjusted.destination,
+            departure_date=adjusted.start_date,
+            return_date=adjusted.end_date,
+            adults=adjusted.adults,
+            max_price=flight_budget,
+            currency_code=adjusted.currency_code,
+        ),
     )
     flights = normalize_flight_options(provider_result)
+    flights = rank_flights(flights, flight_budget)
     return {
         "flights": flights,
         "recovery_suggestions": build_flight_recovery(adjusted, flights, provider_result),
         "message": "Updated flight options based on your request.",
         "applied_inputs": asdict(adjusted),
         "provider_result": provider_result,
+        "price_insights": extract_price_insights(provider_result),
     }
 
 
@@ -396,6 +511,15 @@ def _nightly_budget(budget: str, ratio: float, start_date: str, end_date: str) -
     except ValueError:
         nights = 1
     return round(_budget_slice(budget, ratio) / nights, 2)
+
+
+def _trip_nights(travel_inputs: TravelInputs) -> int:
+    try:
+        start = datetime.strptime(travel_inputs.start_date, "%Y-%m-%d").date()
+        end = datetime.strptime(travel_inputs.end_date, "%Y-%m-%d").date()
+        return max(1, (end - start).days)
+    except ValueError:
+        return 1
 
 
 def _maybe_json_object(value: str) -> dict[str, Any]:

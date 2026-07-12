@@ -17,5 +17,18 @@ export default defineConfig(({ mode }) => {
         },
       },
     },
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (!id.includes("node_modules")) return undefined;
+            if (id.includes("react-leaflet") || id.includes("/leaflet/")) return "maps";
+            if (id.includes("/gsap/")) return "animation";
+            if (id.includes("react-markdown") || id.includes("remark-")) return "markdown";
+            return undefined;
+          },
+        },
+      },
+    },
   };
 });
