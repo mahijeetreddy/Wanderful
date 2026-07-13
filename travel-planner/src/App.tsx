@@ -320,7 +320,9 @@ function App() {
   const [authOpen, setAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode>("login");
   const [profileOpen, setProfileOpen] = useState(false);
-  const [adminOpen, setAdminOpen] = useState(false);
+  const [adminOpen, setAdminOpen] = useState(
+    () => new URLSearchParams(window.location.search).get("admin_panel") === "1",
+  );
   const [jobHistoryOpen, setJobHistoryOpen] = useState(false);
   const [passwordResetToken, setPasswordResetToken] = useState(
     () => new URLSearchParams(window.location.search).get("reset_token") || "",
@@ -332,6 +334,12 @@ function App() {
     const timer = window.setTimeout(() => setBottomVisible(true), 300);
     void refreshAuthUser();
     return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("admin_panel") === "1") {
+      window.history.replaceState({}, "", window.location.pathname);
+    }
   }, []);
 
   useEffect(() => {
@@ -540,6 +548,15 @@ function App() {
     }
   };
 
+  const applyCompletedJob = (job: PlanJob) => {
+    if (job.options) {
+      setOptions(normalizeOptions(job.options));
+    }
+    setItinerary(job.itinerary || "");
+    setStructuredItinerary(job.structured_itinerary || null);
+    setActivePlanJobId(job.id);
+  };
+
   const pollPlanJob = async (jobId: string) => {
     const maxPolls = 240;
     for (let attempt = 0; attempt < maxPolls; attempt += 1) {
@@ -555,9 +572,7 @@ function App() {
         setOptions(normalizeOptions(job.options));
       }
       if (job.status === "complete") {
-        setItinerary(job.itinerary || "");
-        setStructuredItinerary(job.structured_itinerary || null);
-        setActivePlanJobId(jobId);
+        applyCompletedJob(job);
         return;
       }
       if (job.status === "failed") {
@@ -607,6 +622,31 @@ function App() {
     }
     throw new Error("Day regeneration timed out.");
   };
+
+  useEffect(() => {
+    if (!hydrated || !authUser) {
+      return;
+    }
+    const jobId = new URLSearchParams(window.location.search).get("job_id");
+    if (!jobId) {
+      return;
+    }
+    window.history.replaceState({}, "", window.location.pathname);
+    (async () => {
+      try {
+        const response = await apiFetch(`/api/plan-jobs/${jobId}`);
+        const payload = (await parsePlanResponse(response)) as PlanResponse & { job?: PlanJob };
+        if (response.ok && payload.job) {
+          applyCompletedJob(payload.job);
+          setResultTab("itinerary");
+        } else {
+          setError(payload.error || "Could not load that trip.");
+        }
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : "Could not load that trip.");
+      }
+    })();
+  }, [hydrated, authUser]);
 
   const regenerateDay = async (dayNumber: number) => {
     if (!activePlanJobId || regeneratingDay !== null) {
@@ -853,8 +893,8 @@ function App() {
           onLoadedMetadata={handleLoadedMetadata}
         />
       </div>
-      <div className="fixed inset-0 z-10 bg-black/48" />
-      <div className="fixed inset-0 z-10 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.07),transparent_30%,rgba(0,0,0,0.76)_100%)]" />
+      <div className="fixed inset-0 z-10 bg-[#0e1518]/48" />
+      <div className="fixed inset-0 z-10 bg-[radial-gradient(circle_at_center,rgba(63,182,196,0.07),transparent_30%,rgba(0,0,0,0.76)_100%)]" />
       <div className="fixed inset-0 z-10 bg-[linear-gradient(180deg,rgba(0,0,0,0.62)_0%,rgba(0,0,0,0.18)_30%,rgba(0,0,0,0.26)_55%,rgba(0,0,0,0.78)_100%)]" />
       <div ref={presenceRef} className="hero-presence fixed inset-0 z-10 pointer-events-none" />
 
@@ -874,7 +914,7 @@ function App() {
               <a
                 key={item}
                 href={href}
-                className="rounded-full px-4 py-2 text-[11px] font-medium tracking-[0.12em] text-white/78 transition-colors duration-200 hover:bg-white/10 hover:text-white"
+                className="rounded-full px-4 py-2 text-[11px] font-medium tracking-[0.12em] text-white/78 transition-colors duration-200 hover:bg-[#3fb6c4]/10 hover:text-white"
               >
                 {item.toUpperCase()}
               </a>
@@ -892,7 +932,7 @@ function App() {
                 setAuthMode("login");
                 setAuthOpen(true);
               }}
-              className="hidden rounded-full px-3 py-2 text-[10px] font-medium tracking-[0.12em] text-white/78 transition hover:bg-white/10 hover:text-white sm:block sm:text-[11px]"
+              className="hidden rounded-full px-3 py-2 text-[10px] font-medium tracking-[0.12em] text-white/78 transition hover:bg-[#3fb6c4]/10 hover:text-white sm:block sm:text-[11px]"
             >
               {authUser ? `HI, ${authUser.name.split(" ")[0].toUpperCase()}` : "SIGN IN"}
             </button>
@@ -900,19 +940,19 @@ function App() {
             <button
               type="button"
               onClick={() => setSavedTripsOpen(true)}
-              className="hidden rounded-full px-3 py-2 text-[10px] font-medium tracking-[0.12em] text-white/78 transition hover:bg-white/10 hover:text-white md:block sm:text-[11px]"
+              className="hidden rounded-full px-3 py-2 text-[10px] font-medium tracking-[0.12em] text-white/78 transition hover:bg-[#3fb6c4]/10 hover:text-white md:block sm:text-[11px]"
             >
               SAVED TRIPS
             </button>
 
             {authUser?.status === "active" ? (
-              <button type="button" onClick={() => setJobHistoryOpen(true)} className="hidden rounded-full px-3 py-2 text-[10px] font-medium tracking-[0.12em] text-white/78 transition hover:bg-white/10 hover:text-white xl:block">
+              <button type="button" onClick={() => setJobHistoryOpen(true)} className="hidden rounded-full px-3 py-2 text-[10px] font-medium tracking-[0.12em] text-white/78 transition hover:bg-[#3fb6c4]/10 hover:text-white xl:block">
                 JOBS
               </button>
             ) : null}
 
             {authUser?.role === "admin" ? (
-              <button type="button" onClick={() => setAdminOpen(true)} className="hidden rounded-full px-3 py-2 text-[10px] font-medium tracking-[0.12em] text-white/78 transition hover:bg-white/10 hover:text-white xl:block">
+              <button type="button" onClick={() => setAdminOpen(true)} className="hidden rounded-full px-3 py-2 text-[10px] font-medium tracking-[0.12em] text-white/78 transition hover:bg-[#3fb6c4]/10 hover:text-white xl:block">
                 APPROVALS
               </button>
             ) : null}
@@ -920,7 +960,7 @@ function App() {
             <button
               type="button"
               onClick={scrollToPlanner}
-              className="rounded-full bg-white px-4 py-2.5 text-[10px] font-semibold tracking-[0.12em] text-black transition hover:scale-[1.02] hover:shadow-[0_0_28px_rgba(255,255,255,0.18)] sm:px-5 sm:text-[11px]"
+              className="rounded-full bg-[#3fb6c4] px-4 py-2.5 text-[10px] font-semibold tracking-[0.12em] text-[#06181a] transition hover:scale-[1.02] hover:shadow-[0_0_28px_rgba(63,182,196,0.18)] sm:px-5 sm:text-[11px]"
             >
               GET ROAMING
             </button>
@@ -955,7 +995,7 @@ function App() {
             <button
               type="button"
               onClick={scrollToPlanner}
-              className="rounded-full bg-white px-8 py-3.5 text-[15px] font-medium text-black transition-all duration-300 hover:scale-[1.03] hover:shadow-[0_0_32px_4px_rgba(255,255,255,0.2)] active:scale-[0.97]"
+              className="rounded-full bg-[#3fb6c4] px-8 py-3.5 text-[15px] font-medium text-[#06181a] transition-all duration-300 hover:scale-[1.03] hover:shadow-[0_0_32px_4px_rgba(63,182,196,0.2)] active:scale-[0.97]"
             >
               Plan my escape today
             </button>
@@ -992,7 +1032,7 @@ function App() {
                   <p className="text-[11px] font-medium tracking-[0.18em] text-white/55">START PLANNING</p>
                   <h3 className="mt-2 text-2xl font-medium text-white">Your escape details</h3>
                 </div>
-                <span className="rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-[11px] font-medium tracking-[0.12em] text-white/85">
+                <span className="rounded-full border border-[#3fb6c4]/15 bg-[#3fb6c4]/10 px-3 py-1.5 text-[11px] font-medium tracking-[0.12em] text-white/85">
                   SAVED LOCALLY
                 </span>
               </div>
@@ -1003,7 +1043,7 @@ function App() {
                 </div>
               ) : null}
               {!authUser ? (
-                <div className="mb-5 rounded-3xl border border-white/12 bg-white/[0.055] px-4 py-3 text-sm leading-relaxed text-white/68">
+                <div className="mb-5 rounded-3xl border border-[#3fb6c4]/12 bg-[#3fb6c4]/[0.055] px-4 py-3 text-sm leading-relaxed text-white/68">
                   Sign in with an approved account to run live planning and provider searches.
                 </div>
               ) : null}
@@ -1028,20 +1068,20 @@ function App() {
                   value={form.interests}
                   onChange={(event) => updateField("interests", event.target.value)}
                   placeholder="quiet beaches, local food, hiking, scenic drives"
-                  className="w-full resize-none rounded-3xl border border-white/18 bg-black/65 px-4 py-3 text-[15px] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] outline-none transition placeholder:text-white/42 focus:border-white/45 focus:bg-black/75"
+                  className="w-full resize-none rounded-3xl border border-[#3fb6c4]/18 bg-[#0e1518]/65 px-4 py-3 text-[15px] text-white shadow-[inset_0_1px_0_rgba(63,182,196,0.08)] outline-none transition placeholder:text-white/42 focus:border-[#3fb6c4]/45 focus:bg-[#0e1518]/75"
                 />
               </label>
 
               <button
                 type="submit"
                 disabled={loading || !authUser || authUser.status !== "active"}
-                className="mt-5 flex w-full items-center justify-center gap-3 rounded-full bg-white px-8 py-4 text-[15px] font-medium text-black transition-all duration-300 hover:scale-[1.01] hover:shadow-[0_0_32px_4px_rgba(255,255,255,0.18)] active:scale-[0.99] disabled:cursor-wait disabled:opacity-70"
+                className="mt-5 flex w-full items-center justify-center gap-3 rounded-full bg-[#3fb6c4] px-8 py-4 text-[15px] font-medium text-[#06181a] transition-all duration-300 hover:scale-[1.01] hover:shadow-[0_0_32px_4px_rgba(63,182,196,0.18)] active:scale-[0.99] disabled:cursor-wait disabled:opacity-70"
               >
                 {loading ? <Loader2 className="animate-spin" size={18} /> : <ArrowDown size={18} />}
                 {loading ? loadingMessages[loadingMessageIndex] : "Generate my Wanderful itinerary"}
               </button>
               {loading && jobProgress ? (
-                <p className="mt-3 rounded-2xl border border-white/10 bg-white/[0.055] px-3 py-2 text-sm leading-relaxed text-white/62">
+                <p className="mt-3 rounded-2xl border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.055] px-3 py-2 text-sm leading-relaxed text-white/62">
                   {jobProgress}
                 </p>
               ) : null}
@@ -1172,7 +1212,7 @@ function InfoSections() {
   return (
     <section className="relative z-30 px-4 pb-24 sm:px-8 lg:px-10">
       <div className="mx-auto grid max-w-6xl gap-5">
-        <section id="benefits" className="scroll-mt-28 rounded-[32px] border border-white/12 bg-black/64 p-6 shadow-[0_24px_90px_rgba(0,0,0,0.28)] sm:p-8">
+        <section id="benefits" className="scroll-mt-28 rounded-[32px] border border-[#3fb6c4]/12 bg-[#0e1518]/64 p-6 shadow-[0_24px_90px_rgba(0,0,0,0.28)] sm:p-8">
           <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-white/45">Benefits</p>
           <h3 className="mt-3 text-3xl font-medium tracking-[-0.04em] text-white sm:text-5xl">Planning that survives real-world changes.</h3>
           <div className="mt-6 grid gap-3 md:grid-cols-3">
@@ -1183,7 +1223,7 @@ function InfoSections() {
         </section>
 
         <div className="grid gap-5 lg:grid-cols-2">
-          <section id="journal" className="scroll-mt-28 rounded-[32px] border border-white/12 bg-black/58 p-6 sm:p-8">
+          <section id="journal" className="scroll-mt-28 rounded-[32px] border border-[#3fb6c4]/12 bg-[#0e1518]/58 p-6 sm:p-8">
             <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-white/45">Journal</p>
             <h3 className="mt-3 text-3xl font-medium tracking-[-0.04em] text-white">What the planner remembers locally.</h3>
             <p className="mt-4 text-sm leading-relaxed text-white/62">
@@ -1191,7 +1231,7 @@ function InfoSections() {
             </p>
           </section>
 
-          <section id="guidebook" className="scroll-mt-28 rounded-[32px] border border-white/12 bg-black/58 p-6 sm:p-8">
+          <section id="guidebook" className="scroll-mt-28 rounded-[32px] border border-[#3fb6c4]/12 bg-[#0e1518]/58 p-6 sm:p-8">
             <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-white/45">Guidebook</p>
             <h3 className="mt-3 text-3xl font-medium tracking-[-0.04em] text-white">Built for the next AI systems layer.</h3>
             <p className="mt-4 text-sm leading-relaxed text-white/62">
@@ -1206,7 +1246,7 @@ function InfoSections() {
 
 function InfoCard({ title, text }: { title: string; text: string }) {
   return (
-    <div className="rounded-[24px] border border-white/10 bg-white/[0.055] p-4">
+    <div className="rounded-[24px] border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.055] p-4">
       <p className="font-medium text-white">{title}</p>
       <p className="mt-2 text-sm leading-relaxed text-white/58">{text}</p>
     </div>
@@ -1268,10 +1308,10 @@ function AuthModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[95] grid place-items-center bg-black/68 px-4 backdrop-blur-md" onClick={onClose}>
+    <div className="fixed inset-0 z-[95] grid place-items-center bg-[#0e1518]/68 px-4 backdrop-blur-md" onClick={onClose}>
       <form
         onSubmit={submitAuth}
-        className="w-[min(94vw,440px)] rounded-[32px] border border-white/16 bg-black/88 p-6 shadow-[0_34px_110px_rgba(0,0,0,0.55)]"
+        className="w-[min(94vw,440px)] rounded-[32px] border border-[#3fb6c4]/16 bg-[#0e1518]/88 p-6 shadow-[0_34px_110px_rgba(0,0,0,0.55)]"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="mb-6 flex items-start justify-between gap-4">
@@ -1281,7 +1321,7 @@ function AuthModal({
               {mode === "register" ? "Create account" : "Welcome back"}
             </h3>
           </div>
-          <button type="button" onClick={onClose} className="rounded-full border border-white/12 bg-white/8 px-3 py-2 text-sm text-white/72 hover:bg-white/14">
+          <button type="button" onClick={onClose} className="rounded-full border border-[#3fb6c4]/12 bg-[#3fb6c4]/8 px-3 py-2 text-sm text-white/72 hover:bg-[#3fb6c4]/14">
             Close
           </button>
         </div>
@@ -1294,7 +1334,7 @@ function AuthModal({
 
         {error ? <p className="mt-3 rounded-2xl border border-red-300/20 bg-red-500/16 px-3 py-2 text-sm text-red-50">{error}</p> : null}
 
-        <button type="submit" disabled={loading} className="mt-5 w-full rounded-full bg-white px-4 py-3 text-sm font-medium text-black disabled:opacity-60">
+        <button type="submit" disabled={loading} className="mt-5 w-full rounded-full bg-[#3fb6c4] px-4 py-3 text-sm font-medium text-[#06181a] disabled:opacity-60">
           {loading ? "Working..." : mode === "register" ? "Create account" : "Sign in"}
         </button>
 
@@ -1358,7 +1398,7 @@ function AuthField({
         value={value}
         autoComplete={autoComplete}
         onChange={(event) => onChange(event.target.value)}
-        className="h-12 w-full rounded-2xl border border-white/16 bg-black/62 px-3 text-sm text-white outline-none transition focus:border-white/42"
+        className="h-12 w-full rounded-2xl border border-[#3fb6c4]/16 bg-[#0e1518]/62 px-3 text-sm text-white outline-none transition focus:border-[#3fb6c4]/42"
       />
     </label>
   );
@@ -1481,15 +1521,15 @@ function ProfileModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[95] grid place-items-center bg-black/68 px-4 backdrop-blur-md" onClick={onClose}>
+    <div className="fixed inset-0 z-[95] grid place-items-center bg-[#0e1518]/68 px-4 backdrop-blur-md" onClick={onClose}>
       <article
-        className="max-h-[90vh] w-[min(94vw,860px)] overflow-auto rounded-[34px] border border-white/16 bg-[linear-gradient(145deg,rgba(20,20,20,0.96),rgba(5,5,5,0.94))] shadow-[0_34px_110px_rgba(0,0,0,0.55)]"
+        className="max-h-[90vh] w-[min(94vw,860px)] overflow-auto rounded-[34px] border border-[#3fb6c4]/16 bg-[linear-gradient(145deg,rgba(20,20,20,0.96),rgba(5,5,5,0.94))] shadow-[0_34px_110px_rgba(0,0,0,0.55)]"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="border-b border-white/10 p-6 sm:p-8">
+        <div className="border-b border-[#3fb6c4]/10 p-6 sm:p-8">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="flex items-center gap-4">
-              <div className="grid h-16 w-16 place-items-center rounded-full bg-white text-xl font-semibold text-black shadow-[0_0_38px_rgba(255,255,255,0.22)]">
+              <div className="grid h-16 w-16 place-items-center rounded-full bg-[#3fb6c4] text-xl font-semibold text-[#06181a] shadow-[0_0_38px_rgba(63,182,196,0.22)]">
                 {user.name.slice(0, 1).toUpperCase()}
               </div>
               <div>
@@ -1498,20 +1538,20 @@ function ProfileModal({
                 <p className="mt-1 text-sm text-white/54">{user.email}</p>
               </div>
             </div>
-            <button type="button" onClick={onClose} className="rounded-full border border-white/12 bg-white/8 px-3 py-2 text-sm text-white/72 hover:bg-white/14">
+            <button type="button" onClick={onClose} className="rounded-full border border-[#3fb6c4]/12 bg-[#3fb6c4]/8 px-3 py-2 text-sm text-white/72 hover:bg-[#3fb6c4]/14">
               Close
             </button>
           </div>
         </div>
 
         <div className="grid gap-4 p-6 sm:p-8">
-          <form onSubmit={saveProfile} className="rounded-[28px] border border-white/10 bg-white/[0.045] p-4">
+          <form onSubmit={saveProfile} className="rounded-[28px] border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.045] p-4">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <p className="text-[10px] font-medium uppercase tracking-[0.15em] text-white/38">Profile settings</p>
                 <p className="mt-1 text-lg font-medium text-white">Preference memory</p>
               </div>
-              <button type="submit" disabled={savingProfile} className="rounded-full bg-white px-4 py-2.5 text-sm font-medium text-black disabled:opacity-60">
+              <button type="submit" disabled={savingProfile} className="rounded-full bg-[#3fb6c4] px-4 py-2.5 text-sm font-medium text-[#06181a] disabled:opacity-60">
                 {savingProfile ? "Saving..." : "Save profile"}
               </button>
             </div>
@@ -1529,20 +1569,20 @@ function ProfileModal({
           </form>
 
           <div className="grid gap-4 lg:grid-cols-[1fr_1fr]">
-            <form onSubmit={changePassword} className="rounded-[24px] border border-white/10 bg-black/36 p-4">
+            <form onSubmit={changePassword} className="rounded-[24px] border border-[#3fb6c4]/10 bg-[#0e1518]/36 p-4">
               <p className="text-[10px] font-medium uppercase tracking-[0.15em] text-white/38">Security</p>
               <p className="mt-1 text-lg font-medium text-white">Change password</p>
               <div className="mt-3 grid gap-3">
                 <ProfileInput type="password" label="Current password" value={passwordForm.current_password} onChange={(value) => setPasswordForm((current) => ({ ...current, current_password: value }))} />
                 <ProfileInput type="password" label="New password" value={passwordForm.new_password} onChange={(value) => setPasswordForm((current) => ({ ...current, new_password: value }))} />
               </div>
-              <button type="submit" disabled={savingPassword} className="mt-3 rounded-full border border-white/12 bg-white/[0.08] px-4 py-2.5 text-sm font-medium text-white/78 hover:bg-white/14 disabled:opacity-60">
+              <button type="submit" disabled={savingPassword} className="mt-3 rounded-full border border-[#3fb6c4]/12 bg-[#3fb6c4]/[0.08] px-4 py-2.5 text-sm font-medium text-white/78 hover:bg-[#3fb6c4]/14 disabled:opacity-60">
                 {savingPassword ? "Updating..." : "Update password"}
               </button>
               {passwordStatus ? <p className="mt-3 text-sm text-white/62">{passwordStatus}</p> : null}
             </form>
 
-            <div className="rounded-[24px] border border-white/10 bg-black/36 p-4">
+            <div className="rounded-[24px] border border-[#3fb6c4]/10 bg-[#0e1518]/36 p-4">
               <p className="text-[10px] font-medium uppercase tracking-[0.15em] text-white/38">Account workspace</p>
               <p className="mt-3 text-3xl font-medium text-white">{savedTripCount}</p>
               <p className="mt-1 text-sm text-white/54">saved trip{savedTripCount === 1 ? "" : "s"} in this account</p>
@@ -1550,10 +1590,10 @@ function ProfileModal({
           </div>
 
           <div className="flex flex-wrap gap-3">
-            <button type="button" onClick={onOpenSavedTrips} className="rounded-full bg-white px-5 py-3 text-sm font-medium text-black transition hover:scale-[1.01]">
+            <button type="button" onClick={onOpenSavedTrips} className="rounded-full bg-[#3fb6c4] px-5 py-3 text-sm font-medium text-[#06181a] transition hover:scale-[1.01]">
               Open saved trips
             </button>
-            <button type="button" onClick={onLogout} className="rounded-full border border-white/12 bg-white/[0.055] px-5 py-3 text-sm font-medium text-white/72 transition hover:bg-white/12 hover:text-white">
+            <button type="button" onClick={onLogout} className="rounded-full border border-[#3fb6c4]/12 bg-[#3fb6c4]/[0.055] px-5 py-3 text-sm font-medium text-white/72 transition hover:bg-[#3fb6c4]/12 hover:text-white">
               Log out
             </button>
             <button
@@ -1604,7 +1644,7 @@ function ProfileInput({
         maxLength={maxLength}
         placeholder={placeholder}
         onChange={(event) => onChange(event.target.value)}
-        className="h-11 w-full rounded-2xl border border-white/12 bg-black/52 px-3 text-sm text-white outline-none transition placeholder:text-white/32 focus:border-white/38"
+        className="h-11 w-full rounded-2xl border border-[#3fb6c4]/12 bg-[#0e1518]/52 px-3 text-sm text-white outline-none transition placeholder:text-white/32 focus:border-[#3fb6c4]/38"
       />
     </label>
   );
@@ -1641,7 +1681,7 @@ function Field({
         maxLength={maxLength}
         placeholder={placeholder}
         onChange={(event) => onChange(event.target.value)}
-        className="h-12 w-full rounded-full border border-white/18 bg-black/65 px-4 text-[15px] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] outline-none transition placeholder:text-white/42 focus:border-white/45 focus:bg-black/75"
+        className="h-12 w-full rounded-full border border-[#3fb6c4]/18 bg-[#0e1518]/65 px-4 text-[15px] text-white shadow-[inset_0_1px_0_rgba(63,182,196,0.08)] outline-none transition placeholder:text-white/42 focus:border-[#3fb6c4]/45 focus:bg-[#0e1518]/75"
       />
     </label>
   );
@@ -1649,7 +1689,7 @@ function Field({
 
 function InfoRow({ icon, title, text }: { icon: ReactNode; title: string; text: string }) {
   return (
-    <div className="flex gap-3 rounded-3xl border border-white/10 bg-white/[0.035] p-4">
+    <div className="flex gap-3 rounded-3xl border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.035] p-4">
       <div className="mt-0.5 text-white/65">{icon}</div>
       <div>
         <p className="font-medium text-white">{title}</p>
@@ -1693,11 +1733,11 @@ function ItineraryResult({
   ];
 
   return (
-    <div className="overflow-hidden rounded-[28px] border border-white/14 bg-black/70 shadow-[0_24px_90px_rgba(0,0,0,0.32)]">
-      <div className="border-b border-white/12 bg-black/55 p-4 sm:p-5">
+    <div className="overflow-hidden rounded-[28px] border border-[#3fb6c4]/14 bg-[#0e1518]/70 shadow-[0_24px_90px_rgba(0,0,0,0.32)]">
+      <div className="border-b border-[#3fb6c4]/12 bg-[#0e1518]/55 p-4 sm:p-5">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {quickFacts.map((fact) => (
-            <div key={fact.label} className="rounded-3xl border border-white/12 bg-black/65 p-4">
+            <div key={fact.label} className="rounded-3xl border border-[#3fb6c4]/12 bg-[#0e1518]/65 p-4">
               <div className="flex items-center gap-2 text-white/55">
                 {fact.icon}
                 <span className="text-[10px] font-medium uppercase tracking-[0.16em]">{fact.label}</span>
@@ -1709,15 +1749,15 @@ function ItineraryResult({
 
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2 text-[12px] text-white/60">
-            <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.05] px-3 py-1.5">
+            <span className="inline-flex items-center gap-2 rounded-full border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.05] px-3 py-1.5">
               <Clock size={13} /> {tripLength}
             </span>
-            <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.05] px-3 py-1.5">
+            <span className="inline-flex items-center gap-2 rounded-full border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.05] px-3 py-1.5">
               <Sparkles size={13} /> {form.interests || "Custom interests"}
             </span>
           </div>
 
-          <div className="flex flex-wrap rounded-[22px] border border-white/12 bg-black/65 p-1">
+          <div className="flex flex-wrap rounded-[22px] border border-[#3fb6c4]/12 bg-[#0e1518]/65 p-1">
             {[
               ["itinerary", "Itinerary"],
               ["hotels", "Hotels Map"],
@@ -1729,7 +1769,7 @@ function ItineraryResult({
                 type="button"
                 onClick={() => onTabChange(tab as ResultTab)}
                 className={`rounded-full px-4 py-2 text-[12px] font-medium transition ${
-                  activeTab === tab ? "bg-white text-black" : "text-white/68 hover:text-white"
+                  activeTab === tab ? "bg-[#3fb6c4] text-[#06181a]" : "text-white/68 hover:text-white"
                 }`}
               >
                 {label}
@@ -1771,13 +1811,13 @@ function ItineraryResult({
 
           {itinerary && structuredItinerary ? <TripEssentials itinerary={structuredItinerary} /> : null}
 
-          {itinerary ? <article className="itinerary-markdown max-h-[620px] overflow-auto rounded-[26px] border border-white/12 bg-black/68 p-5 sm:p-7">
-            <div className="mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-4">
+          {itinerary ? <article className="itinerary-markdown max-h-[620px] overflow-auto rounded-[26px] border border-[#3fb6c4]/12 bg-[#0e1518]/68 p-5 sm:p-7">
+            <div className="mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-[#3fb6c4]/10 pb-4">
               <div>
                 <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/45">Detailed Plan</p>
                 <p className="mt-1 text-lg font-medium text-white">Full itinerary notes</p>
               </div>
-              <span className="rounded-full border border-white/10 bg-white/[0.06] px-3 py-1.5 text-[11px] text-white/58">
+              <span className="rounded-full border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.06] px-3 py-1.5 text-[11px] text-white/58">
                 Markdown source preserved
               </span>
             </div>
@@ -1785,7 +1825,7 @@ function ItineraryResult({
               remarkPlugins={[remarkGfm]}
               components={{
                 a: ({ children, href }) => (
-                  <a href={href} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-white hover:bg-white/16">
+                  <a href={href} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full border border-[#3fb6c4]/15 bg-[#3fb6c4]/10 px-2.5 py-1 text-white hover:bg-[#3fb6c4]/16">
                     {children}
                     <ExternalLink size={12} />
                   </a>
@@ -1899,7 +1939,7 @@ function HotelMapPanel({
   return (
     <div className="grid gap-5 p-4 sm:p-5 lg:grid-cols-[0.92fr_1.08fr]">
       <div className="max-h-[760px] space-y-3 overflow-auto pr-1">
-        <div className="rounded-[28px] border border-white/12 bg-[radial-gradient(circle_at_20%_0%,rgba(255,255,255,0.16),transparent_34%),rgba(0,0,0,0.68)] p-5 shadow-[0_22px_70px_rgba(0,0,0,0.28)]">
+        <div className="rounded-[28px] border border-[#3fb6c4]/12 bg-[radial-gradient(circle_at_20%_0%,rgba(63,182,196,0.16),transparent_34%),rgba(0,0,0,0.68)] p-5 shadow-[0_22px_70px_rgba(0,0,0,0.28)]">
           <div className="flex items-start justify-between gap-4">
             <div>
               <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-white/50">Stay Finder</p>
@@ -1908,7 +1948,7 @@ function HotelMapPanel({
                 Pick a hotel to preview where it sits on the map. The AI itinerary remains unchanged for now.
               </p>
             </div>
-            <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-white text-black shadow-[0_0_38px_rgba(255,255,255,0.18)]">
+            <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-[#3fb6c4] text-[#06181a] shadow-[0_0_38px_rgba(63,182,196,0.18)]">
               <Building2 size={20} />
             </div>
           </div>
@@ -1917,7 +1957,7 @@ function HotelMapPanel({
             <StatPill label="Mapped" value={String(hotelsWithCoordinates.length)} />
             <StatPill label="Selected" value={selectedHotel?.nightly_rate || selectedHotel?.hotel_class || "Ready"} />
           </div>
-          <div className="mt-5 rounded-[22px] border border-white/10 bg-black/35 p-4">
+          <div className="mt-5 rounded-[22px] border border-[#3fb6c4]/10 bg-[#0e1518]/35 p-4">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/42">Nightly Price Filter</p>
@@ -1927,7 +1967,7 @@ function HotelMapPanel({
                 type="button"
                 onClick={refreshHotels}
                 disabled={hotelLoading}
-                className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2.5 text-sm font-medium text-black transition hover:scale-[1.01] disabled:opacity-60"
+                className="inline-flex items-center gap-2 rounded-full bg-[#3fb6c4] px-4 py-2.5 text-sm font-medium text-[#06181a] transition hover:scale-[1.01] disabled:opacity-60"
               >
                 {hotelLoading ? <Loader2 className="animate-spin" size={14} /> : <Search size={14} />}
                 Search
@@ -1953,7 +1993,7 @@ function HotelMapPanel({
             ) : null}
           </div>
         </div>
-        {hotels.map((hotel) => (
+        {hotels.map((hotel, hotelIndex) => (
           <article
             key={hotel.id}
             onClick={() => setSelectedHotelId(hotel.id)}
@@ -1964,10 +2004,11 @@ function HotelMapPanel({
             }}
             role="button"
             tabIndex={0}
-            className={`hotel-option-card group w-full cursor-pointer rounded-[26px] border p-4 text-left transition duration-300 focus:outline-none focus:ring-2 focus:ring-white/30 ${
+            style={{ animationDelay: `${Math.min(hotelIndex, 8) * 45}ms` }}
+            className={`hotel-option-card card-hover card-enter group w-full cursor-pointer rounded-[26px] border p-4 text-left focus:outline-none focus:ring-2 focus:ring-[#3fb6c4]/30 ${
               selectedHotel?.id === hotel.id
-                ? "border-white/60 bg-white/[0.16]"
-                : "border-white/12 bg-black/58 hover:border-white/28 hover:bg-white/[0.08]"
+                ? "border-[#3fb6c4]/60 bg-[#3fb6c4]/[0.16]"
+                : "border-[#3fb6c4]/12 bg-[#0e1518]/58 hover:border-[#3fb6c4]/28 hover:bg-[#3fb6c4]/[0.08]"
             }`}
           >
             {hotel.image_thumbnail ? (
@@ -1975,15 +2016,7 @@ function HotelMapPanel({
                 src={hotel.image_thumbnail}
                 alt={hotel.name}
                 loading="lazy"
-                className="mb-3 h-36 w-full rounded-[18px] object-cover"
-              />
-            ) : null}
-            {hotel.image_thumbnail ? (
-              <img
-                src={hotel.image_thumbnail}
-                alt={hotel.name}
-                loading="lazy"
-                className="mb-3 h-36 w-full rounded-2xl border border-white/10 object-cover"
+                className="mb-3 h-36 w-full rounded-2xl border border-[#3fb6c4]/10 object-cover"
               />
             ) : null}
             <div className="flex items-start justify-between gap-3">
@@ -1994,8 +2027,8 @@ function HotelMapPanel({
                 <p className="mt-1 text-lg font-medium leading-tight text-white">{hotel.name}</p>
               </div>
               <div className="flex flex-col items-end gap-2">
-                {hotel.rank_score ? <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-black">{hotel.rank_score} match</span> : null}
-                {hotel.coordinates ? <span className="rounded-full border border-white/12 px-2.5 py-1 text-[11px] text-white/62">Mapped</span> : null}
+                {hotel.rank_score ? <span className="rounded-full bg-[#3fb6c4] px-2.5 py-1 text-[11px] font-semibold text-[#06181a]">{hotel.rank_score} match</span> : null}
+                {hotel.coordinates ? <span className="rounded-full border border-[#3fb6c4]/12 px-2.5 py-1 text-[11px] text-white/62">Mapped</span> : null}
               </div>
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
@@ -2007,7 +2040,7 @@ function HotelMapPanel({
             {hotel.amenities?.length ? (
               <div className="mt-3 flex flex-wrap gap-1.5">
                 {hotel.amenities.slice(0, 8).map((amenity) => (
-                  <span key={amenity} className="rounded-full border border-white/10 bg-black/20 px-2.5 py-1 text-[11px] text-white/62">
+                  <span key={amenity} className="rounded-full border border-[#3fb6c4]/10 bg-[#0e1518]/20 px-2.5 py-1 text-[11px] text-white/62">
                     {amenity}
                   </span>
                 ))}
@@ -2029,7 +2062,7 @@ function HotelMapPanel({
                 onLockHotel(lockedHotelId === hotel.id ? "" : hotel.id);
               }}
               className={`mt-4 rounded-full px-3 py-1.5 text-sm transition ${
-                lockedHotelId === hotel.id ? "bg-white text-black" : "border border-white/12 bg-white/[0.06] text-white/72 hover:bg-white/12"
+                lockedHotelId === hotel.id ? "bg-[#3fb6c4] text-[#06181a]" : "border border-[#3fb6c4]/12 bg-[#3fb6c4]/[0.06] text-white/72 hover:bg-[#3fb6c4]/12"
               }`}
             >
               {lockedHotelId === hotel.id ? "Locked selection" : "Lock this hotel"}
@@ -2040,7 +2073,7 @@ function HotelMapPanel({
                 target="_blank"
                 rel="noreferrer"
                 onClick={(event) => event.stopPropagation()}
-                className="mt-4 inline-flex items-center gap-1.5 rounded-full border border-white/12 bg-white/[0.08] px-3 py-1.5 text-sm text-white/78 transition hover:bg-white hover:text-black"
+                className="mt-4 inline-flex items-center gap-1.5 rounded-full border border-[#3fb6c4]/12 bg-[#3fb6c4]/[0.08] px-3 py-1.5 text-sm text-white/78 transition hover:bg-[#3fb6c4] hover:text-[#06181a]"
               >
                 View hotel <ExternalLink size={12} />
               </a>
@@ -2049,15 +2082,15 @@ function HotelMapPanel({
         ))}
       </div>
 
-      <div className="hotel-map-shell relative overflow-hidden rounded-[34px] border border-white/14 bg-black/60 shadow-[0_32px_110px_rgba(0,0,0,0.44)]">
+      <div className="hotel-map-shell relative overflow-hidden rounded-[34px] border border-[#3fb6c4]/14 bg-[#0e1518]/60 shadow-[0_32px_110px_rgba(0,0,0,0.44)]">
         <div className="pointer-events-none absolute inset-x-0 top-0 z-[500] h-28 bg-gradient-to-b from-black/70 to-transparent" />
         <div className="pointer-events-none absolute left-4 right-4 top-4 z-[501] flex flex-wrap items-start justify-between gap-3">
-          <div className="rounded-2xl border border-white/12 bg-black/72 px-4 py-3 backdrop-blur-md">
+          <div className="rounded-2xl border border-[#3fb6c4]/12 bg-[#0e1518]/72 px-4 py-3 backdrop-blur-md">
             <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/50">OpenStreetMap</p>
             <p className="mt-1 text-sm font-medium text-white">{hotelsWithCoordinates.length} mapped option{hotelsWithCoordinates.length === 1 ? "" : "s"}</p>
           </div>
           {selectedHotel ? (
-            <div className="max-w-[320px] rounded-2xl border border-white/12 bg-black/72 px-4 py-3 text-right backdrop-blur-md">
+            <div className="max-w-[320px] rounded-2xl border border-[#3fb6c4]/12 bg-[#0e1518]/72 px-4 py-3 text-right backdrop-blur-md">
               <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/45">Selected Stay</p>
               <p className="mt-1 truncate text-sm font-medium text-white">{selectedHotel.name}</p>
               <p className="mt-1 text-xs text-white/55">{formatHotelMeta(selectedHotel)}</p>
@@ -2104,7 +2137,7 @@ function HotelMapPanel({
 
 function StatPill({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-black/35 px-3 py-2">
+    <div className="rounded-2xl border border-[#3fb6c4]/10 bg-[#0e1518]/35 px-3 py-2">
       <p className="text-[10px] uppercase tracking-[0.14em] text-white/38">{label}</p>
       <p className="mt-1 truncate text-sm font-medium text-white">{value}</p>
     </div>
@@ -2113,7 +2146,7 @@ function StatPill({ label, value }: { label: string; value: string }) {
 
 function HotelMetric({ label, value }: { label: string; value: string }) {
   return (
-    <span className="rounded-full border border-white/10 bg-white/[0.075] px-3 py-1.5 text-xs text-white/74">
+    <span className="rounded-full border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.075] px-3 py-1.5 text-xs text-white/74">
       <span className="text-white/38">{label}</span> {value}
     </span>
   );
@@ -2159,12 +2192,13 @@ function WeatherStrip({ weather }: { weather: WeatherInfo | null }) {
   const unitSymbol = weather.units === "metric" ? "C" : weather.units === "standard" ? "K" : "F";
   return (
     <div className="flex gap-2 overflow-x-auto pb-1">
-      {weather.days.map((day) => {
+      {weather.days.map((day, dayIndex) => {
         const Icon = weatherIcon(day.condition_group);
         return (
           <div
             key={day.date}
-            className="flex min-w-[132px] shrink-0 flex-col items-center gap-1.5 rounded-2xl border border-white/10 bg-white/[0.06] px-3 py-3 text-center"
+            style={{ animationDelay: `${Math.min(dayIndex, 8) * 45}ms` }}
+            className="card-hover card-enter flex min-w-[132px] shrink-0 flex-col items-center gap-1.5 rounded-2xl border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.06] px-3 py-3 text-center hover:border-[#3fb6c4]/26 hover:bg-[#3fb6c4]/[0.1]"
           >
             <p className="text-[10px] uppercase tracking-[0.14em] text-white/45">{formatWeatherDay(day.date)}</p>
             <Icon size={22} className="text-white/85" />
@@ -2272,7 +2306,7 @@ function FlightOptionsPanel({
   return (
     <div className="grid gap-5 p-4 sm:p-5 lg:grid-cols-[1fr_360px]">
       <div className="space-y-3">
-        <div className="rounded-[28px] border border-white/12 bg-[radial-gradient(circle_at_12%_0%,rgba(255,255,255,0.16),transparent_36%),rgba(0,0,0,0.68)] p-5 shadow-[0_22px_70px_rgba(0,0,0,0.28)]">
+        <div className="rounded-[28px] border border-[#3fb6c4]/12 bg-[radial-gradient(circle_at_12%_0%,rgba(63,182,196,0.16),transparent_36%),rgba(0,0,0,0.68)] p-5 shadow-[0_22px_70px_rgba(0,0,0,0.28)]">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-white/50">Flight Board</p>
@@ -2283,7 +2317,7 @@ function FlightOptionsPanel({
                 Compare available routes, continue to provider booking options, or retry nearby dates and airports without rebuilding the whole trip.
               </p>
             </div>
-            <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-white text-black shadow-[0_0_38px_rgba(255,255,255,0.18)]">
+            <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-[#3fb6c4] text-[#06181a] shadow-[0_0_38px_rgba(63,182,196,0.18)]">
               <Plane size={20} />
             </div>
           </div>
@@ -2313,7 +2347,8 @@ function FlightOptionsPanel({
               }}
               role="button"
               tabIndex={0}
-              className="flight-option-card block w-full cursor-pointer rounded-[28px] border border-white/12 bg-black/70 p-5 text-left shadow-[0_20px_70px_rgba(0,0,0,0.28)] transition duration-300 hover:-translate-y-1 hover:border-white/28 focus:outline-none focus:ring-2 focus:ring-white/30"
+              style={{ animationDelay: `${Math.min(flightIndex, 8) * 45}ms` }}
+              className="flight-option-card card-hover card-enter block w-full cursor-pointer rounded-[28px] border border-[#3fb6c4]/12 bg-[#0e1518]/70 p-5 text-left shadow-[0_20px_70px_rgba(0,0,0,0.28)] hover:border-[#3fb6c4]/28 focus:outline-none focus:ring-2 focus:ring-[#3fb6c4]/30"
             >
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
@@ -2322,12 +2357,12 @@ function FlightOptionsPanel({
                   </p>
                   <p className="mt-1 text-3xl font-medium tracking-[-0.05em] text-white">{formatFlightPrice(flight)}</p>
                   <div className="mt-2 flex flex-wrap gap-2 text-xs text-white/62">
-                    <span className="rounded-full border border-white/10 bg-white/[0.07] px-3 py-1.5">{formatFlightDuration(flight.total_duration_minutes)}</span>
-                    <span className="rounded-full border border-white/10 bg-white/[0.07] px-3 py-1.5">
+                    <span className="rounded-full border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.07] px-3 py-1.5">{formatFlightDuration(flight.total_duration_minutes)}</span>
+                    <span className="rounded-full border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.07] px-3 py-1.5">
                       {flight.has_return_details ? "Round-trip details found" : "Return details may be incomplete"}
                     </span>
-                    <span className="rounded-full border border-white/10 bg-white/[0.07] px-3 py-1.5">{getFlightAirlines(flight)}</span>
-                    {flight.rank_score ? <span className="rounded-full bg-white px-3 py-1.5 font-semibold text-black">{flight.rank_score} match</span> : null}
+                    <span className="rounded-full border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.07] px-3 py-1.5">{getFlightAirlines(flight)}</span>
+                    {flight.rank_score ? <span className="rounded-full bg-[#3fb6c4] px-3 py-1.5 font-semibold text-[#06181a]">{flight.rank_score} match</span> : null}
                   </div>
                 </div>
               </div>
@@ -2339,28 +2374,28 @@ function FlightOptionsPanel({
                   const isLast = index === segments.length - 1;
                   return (
                     <div key={`${flight.id}-${index}`}>
-                      <div className="flight-segment-row rounded-[22px] border border-white/10 bg-white/[0.055] p-4">
+                      <div className="flight-segment-row rounded-[22px] border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.055] p-4">
                         <div className="flex items-center gap-3">
-                          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-white text-black">
+                          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#3fb6c4] text-[#06181a]">
                             <Plane size={16} />
                           </div>
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-2">
                               <p className="font-medium text-white">{segment.airline || "Airline"}</p>
-                              {segment.flight_number ? <span className="rounded-full bg-black/35 px-2 py-0.5 text-[11px] text-white/48">{segment.flight_number}</span> : null}
+                              {segment.flight_number ? <span className="rounded-full bg-[#0e1518]/35 px-2 py-0.5 text-[11px] text-white/48">{segment.flight_number}</span> : null}
                             </div>
                             <p className="mt-1 text-sm text-white/54">
                               {segment.from || "?"} to {segment.to || "?"} - {segment.depart_at || "departure TBD"}
                               {segment.arrive_at ? ` to ${segment.arrive_at}` : ""}
                             </p>
                           </div>
-                          <p className="hidden rounded-full border border-white/10 bg-black/30 px-3 py-1 text-xs text-white/52 sm:block">
+                          <p className="hidden rounded-full border border-[#3fb6c4]/10 bg-[#0e1518]/30 px-3 py-1 text-xs text-white/52 sm:block">
                             {formatFlightDuration(segment.duration_minutes)}
                           </p>
                         </div>
                       </div>
                       {!isLast && layover ? (
-                        <div className="ml-5 flex items-center gap-2 border-l border-dashed border-white/15 py-2 pl-4 text-[11px] text-amber-100/70">
+                        <div className="ml-5 flex items-center gap-2 border-l border-dashed border-[#3fb6c4]/15 py-2 pl-4 text-[11px] text-amber-100/70">
                           <Clock size={12} />
                           <span>
                             Layover{layover.name ? ` in ${layover.name}` : layover.id ? ` at ${layover.id}` : ""}
@@ -2382,7 +2417,7 @@ function FlightOptionsPanel({
                   ))}
                 </div>
               ) : null}
-              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-white/10 pt-4">
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[#3fb6c4]/10 pt-4">
                 <p className="max-w-2xl text-xs leading-relaxed text-white/42">
                   {flight.carbon_emissions?.difference_percent != null
                     ? `Estimated emissions ${Math.abs(flight.carbon_emissions.difference_percent)}% ${
@@ -2395,7 +2430,7 @@ function FlightOptionsPanel({
                   target="_blank"
                   rel="noreferrer"
                   onClick={(event) => event.stopPropagation()}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-white/12 bg-white/[0.08] px-3 py-1.5 text-sm text-white/78 transition hover:bg-white hover:text-black"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-[#3fb6c4]/12 bg-[#3fb6c4]/[0.08] px-3 py-1.5 text-sm text-white/78 transition hover:bg-[#3fb6c4] hover:text-[#06181a]"
                 >
                   Open Google Flights <ExternalLink size={13} />
                 </a>
@@ -2406,7 +2441,7 @@ function FlightOptionsPanel({
                     onLockFlight(lockedFlightId === flight.id ? "" : flight.id);
                   }}
                   className={`rounded-full px-3 py-1.5 text-sm transition ${
-                    lockedFlightId === flight.id ? "bg-white text-black" : "border border-white/12 bg-white/[0.08] text-white/78 hover:bg-white hover:text-black"
+                    lockedFlightId === flight.id ? "bg-[#3fb6c4] text-[#06181a]" : "border border-[#3fb6c4]/12 bg-[#3fb6c4]/[0.08] text-white/78 hover:bg-[#3fb6c4] hover:text-[#06181a]"
                   }`}
                 >
                   {lockedFlightId === flight.id ? "Locked selection" : "Lock this flight"}
@@ -2427,7 +2462,7 @@ function FlightOptionsPanel({
       </div>
 
       <aside className="space-y-3">
-        <div className="rounded-[26px] border border-white/12 bg-black/68 p-4 shadow-[0_18px_60px_rgba(0,0,0,0.24)]">
+        <div className="rounded-[26px] border border-[#3fb6c4]/12 bg-[#0e1518]/68 p-4 shadow-[0_18px_60px_rgba(0,0,0,0.24)]">
           <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/60">Flight search controls</p>
           <div className="mt-3 grid gap-3">
             <FlightControlField
@@ -2461,30 +2496,30 @@ function FlightOptionsPanel({
             type="button"
             onClick={() => searchAlternates("manual flight search", flightSearch)}
             disabled={loading}
-            className="mt-3 flex w-full items-center justify-center gap-2 rounded-full bg-white px-4 py-3 text-sm font-medium text-black transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-60"
+            className="mt-3 flex w-full items-center justify-center gap-2 rounded-full bg-[#3fb6c4] px-4 py-3 text-sm font-medium text-[#06181a] transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-60"
           >
             {loading ? <Loader2 className="animate-spin" size={15} /> : <Search size={15} />}
             Check these flights
           </button>
-          <p className="mt-3 rounded-2xl border border-white/10 bg-white/[0.055] px-3 py-2 text-xs leading-relaxed text-white/56">
+          <p className="mt-3 rounded-2xl border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.055] px-3 py-2 text-xs leading-relaxed text-white/56">
             City names are converted to likely airport codes automatically, for example Los Angeles to LAX and San Jose to SJC.
           </p>
         </div>
 
-        <div className="rounded-[26px] border border-white/12 bg-black/68 p-4 shadow-[0_18px_55px_rgba(0,0,0,0.2)]">
+        <div className="rounded-[26px] border border-[#3fb6c4]/12 bg-[#0e1518]/68 p-4 shadow-[0_18px_55px_rgba(0,0,0,0.2)]">
           <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/50">Try another search</p>
           <textarea
             value={instruction}
             onChange={(event) => setInstruction(event.target.value)}
             rows={4}
             placeholder="Try leaving two days earlier, use SFO instead, or try nearby airports."
-            className="mt-3 w-full resize-none rounded-2xl border border-white/16 bg-black/68 p-3 text-sm text-white outline-none placeholder:text-white/42 focus:border-white/42"
+            className="mt-3 w-full resize-none rounded-2xl border border-[#3fb6c4]/16 bg-[#0e1518]/68 p-3 text-sm text-white outline-none placeholder:text-white/42 focus:border-[#3fb6c4]/42"
           />
           <button
             type="button"
             onClick={() => searchAlternates(instruction, flightSearch)}
             disabled={loading || !instruction.trim()}
-            className="mt-3 flex w-full items-center justify-center gap-2 rounded-full bg-white px-4 py-3 text-sm font-medium text-black transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-60"
+            className="mt-3 flex w-full items-center justify-center gap-2 rounded-full bg-[#3fb6c4] px-4 py-3 text-sm font-medium text-[#06181a] transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-60"
           >
             {loading ? <Loader2 className="animate-spin" size={15} /> : <Search size={15} />}
             Search alternate flights
@@ -2493,7 +2528,7 @@ function FlightOptionsPanel({
         </div>
 
         {currentRecovery.length ? (
-          <div className="rounded-[26px] border border-white/12 bg-black/68 p-4 shadow-[0_18px_55px_rgba(0,0,0,0.2)]">
+          <div className="rounded-[26px] border border-[#3fb6c4]/12 bg-[#0e1518]/68 p-4 shadow-[0_18px_55px_rgba(0,0,0,0.2)]">
             <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/50">Suggestions</p>
             <div className="mt-3 space-y-2">
               {currentRecovery.map((suggestion) => (
@@ -2504,7 +2539,7 @@ function FlightOptionsPanel({
                     setInstruction(suggestion.instruction);
                     void searchAlternates(suggestion.instruction, flightSearch);
                   }}
-                  className="w-full rounded-2xl border border-white/10 bg-white/[0.055] px-3 py-2 text-left text-sm leading-relaxed text-white/72 transition hover:border-white/24 hover:bg-white/[0.11] hover:text-white"
+                  className="w-full rounded-2xl border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.055] px-3 py-2 text-left text-sm leading-relaxed text-white/72 transition hover:border-[#3fb6c4]/24 hover:bg-[#3fb6c4]/[0.11] hover:text-white"
                 >
                   {suggestion.label}
                 </button>
@@ -2641,9 +2676,9 @@ function FlightDetailModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[90] grid place-items-center bg-black/70 px-4 backdrop-blur-md" onClick={onClose}>
+    <div className="fixed inset-0 z-[90] grid place-items-center bg-[#0e1518]/70 px-4 backdrop-blur-md" onClick={onClose}>
       <article
-        className="max-h-[88vh] w-[min(94vw,920px)] overflow-auto rounded-[34px] border border-white/16 bg-[linear-gradient(145deg,rgba(22,22,22,0.97),rgba(6,6,6,0.96))] p-6 shadow-[0_34px_120px_rgba(0,0,0,0.62)] sm:p-8"
+        className="max-h-[88vh] w-[min(94vw,920px)] overflow-auto rounded-[34px] border border-[#3fb6c4]/16 bg-[linear-gradient(145deg,rgba(22,22,22,0.97),rgba(6,6,6,0.96))] p-6 shadow-[0_34px_120px_rgba(0,0,0,0.62)] sm:p-8"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
@@ -2651,14 +2686,14 @@ function FlightDetailModal({
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/45">Flight Details</p>
             <h3 className="mt-2 text-3xl font-medium tracking-[-0.05em] text-white sm:text-5xl">{formatFlightPrice(activeFlight)}</h3>
             <div className="mt-3 flex flex-wrap gap-2 text-xs text-white/66">
-              <span className="rounded-full border border-white/10 bg-white/[0.07] px-3 py-1.5">{formatFlightDuration(activeFlight.total_duration_minutes)}</span>
-              <span className="rounded-full border border-white/10 bg-white/[0.07] px-3 py-1.5">{getFlightAirlines(activeFlight)}</span>
-              <span className="rounded-full border border-white/10 bg-white/[0.07] px-3 py-1.5">
+              <span className="rounded-full border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.07] px-3 py-1.5">{formatFlightDuration(activeFlight.total_duration_minutes)}</span>
+              <span className="rounded-full border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.07] px-3 py-1.5">{getFlightAirlines(activeFlight)}</span>
+              <span className="rounded-full border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.07] px-3 py-1.5">
                 {activeFlight.has_return_details ? "Return details included" : "Return selection may still be required"}
               </span>
             </div>
           </div>
-          <button type="button" onClick={onClose} className="rounded-full border border-white/12 bg-white/8 px-3 py-2 text-sm text-white/72 hover:bg-white/14">
+          <button type="button" onClick={onClose} className="rounded-full border border-[#3fb6c4]/12 bg-[#3fb6c4]/8 px-3 py-2 text-sm text-white/72 hover:bg-[#3fb6c4]/14">
             Close
           </button>
         </div>
@@ -2674,7 +2709,7 @@ function FlightDetailModal({
 
         <div className="grid gap-3">
           {(activeFlight.segments || []).map((segment, index) => (
-            <div key={`${activeFlight.id}-modal-${index}`} className="rounded-[24px] border border-white/10 bg-white/[0.055] p-4">
+            <div key={`${activeFlight.id}-modal-${index}`} className="rounded-[24px] border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.055] p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <p className="text-lg font-medium text-white">{segment.airline || "Airline"} {segment.flight_number || ""}</p>
@@ -2683,13 +2718,13 @@ function FlightDetailModal({
                     {segment.arrive_at ? ` to ${segment.arrive_at}` : ""}
                   </p>
                 </div>
-                <span className="rounded-full border border-white/10 bg-black/30 px-3 py-1.5 text-xs text-white/58">
+                <span className="rounded-full border border-[#3fb6c4]/10 bg-[#0e1518]/30 px-3 py-1.5 text-xs text-white/58">
                   {formatFlightDuration(segment.duration_minutes)}
                 </span>
               </div>
               <div className="mt-3 flex flex-wrap gap-2 text-xs text-white/48">
-                {segment.airplane ? <span className="rounded-full bg-black/30 px-3 py-1">{segment.airplane}</span> : null}
-                {segment.travel_class ? <span className="rounded-full bg-black/30 px-3 py-1">{segment.travel_class}</span> : null}
+                {segment.airplane ? <span className="rounded-full bg-[#0e1518]/30 px-3 py-1">{segment.airplane}</span> : null}
+                {segment.travel_class ? <span className="rounded-full bg-[#0e1518]/30 px-3 py-1">{segment.travel_class}</span> : null}
               </div>
             </div>
           ))}
@@ -2700,7 +2735,7 @@ function FlightDetailModal({
             type="button"
             onClick={loadReturnOptions}
             disabled={loadingReturns || activeFlight.has_return_details || !activeFlight.departure_token}
-            className="inline-flex items-center justify-center gap-2 rounded-full border border-white/12 bg-white/[0.08] px-4 py-3 text-sm font-medium text-white/82 transition hover:bg-white hover:text-black disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex items-center justify-center gap-2 rounded-full border border-[#3fb6c4]/12 bg-[#3fb6c4]/[0.08] px-4 py-3 text-sm font-medium text-white/82 transition hover:bg-[#3fb6c4] hover:text-[#06181a] disabled:cursor-not-allowed disabled:opacity-60"
           >
             {loadingReturns ? <Loader2 className="animate-spin" size={15} /> : <RotateCcw size={15} />}
             Select return flight
@@ -2709,7 +2744,7 @@ function FlightDetailModal({
             type="button"
             onClick={loadBookingOptions}
             disabled={loadingBookings || !activeFlight.booking_token}
-            className="inline-flex items-center justify-center gap-2 rounded-full bg-white px-4 py-3 text-sm font-medium text-black transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex items-center justify-center gap-2 rounded-full bg-[#3fb6c4] px-4 py-3 text-sm font-medium text-[#06181a] transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-60"
           >
             {loadingBookings ? <Loader2 className="animate-spin" size={15} /> : <Search size={15} />}
             Load booking options
@@ -2718,7 +2753,7 @@ function FlightDetailModal({
             href={buildGoogleFlightsUrl(search)}
             target="_blank"
             rel="noreferrer"
-            className="inline-flex items-center justify-center gap-2 rounded-full border border-white/12 bg-white/[0.08] px-4 py-3 text-sm font-medium text-white/82 transition hover:bg-white hover:text-black"
+            className="inline-flex items-center justify-center gap-2 rounded-full border border-[#3fb6c4]/12 bg-[#3fb6c4]/[0.08] px-4 py-3 text-sm font-medium text-white/82 transition hover:bg-[#3fb6c4] hover:text-[#06181a]"
           >
             Open Google Flights <ExternalLink size={15} />
           </a>
@@ -2728,7 +2763,7 @@ function FlightDetailModal({
         {returnStatus ? <p className="mt-4 text-sm leading-relaxed text-white/58">{returnStatus}</p> : null}
 
         {returnOptions.length ? (
-          <div className="mt-4 rounded-[26px] border border-white/10 bg-white/[0.04] p-4">
+          <div className="mt-4 rounded-[26px] border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.04] p-4">
             <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">Return flight options</p>
             <div className="mt-3 grid gap-3">
               {returnOptions.map((option) => (
@@ -2738,8 +2773,8 @@ function FlightDetailModal({
                   onClick={() => selectReturnOption(option)}
                   className={`rounded-[22px] border p-4 text-left transition ${
                     selectedReturnId === option.id
-                      ? "border-white/50 bg-white/[0.12]"
-                      : "border-white/10 bg-black/24 hover:border-white/24 hover:bg-white/[0.08]"
+                      ? "border-[#3fb6c4]/50 bg-[#3fb6c4]/[0.12]"
+                      : "border-[#3fb6c4]/10 bg-[#0e1518]/24 hover:border-[#3fb6c4]/24 hover:bg-[#3fb6c4]/[0.08]"
                   }`}
                 >
                   <div className="flex flex-wrap items-start justify-between gap-3">
@@ -2749,13 +2784,13 @@ function FlightDetailModal({
                         {formatFlightDuration(option.total_duration_minutes)} - {formatFlightPrice(option)}
                       </p>
                     </div>
-                    <span className="rounded-full border border-white/10 bg-black/30 px-3 py-1 text-xs text-white/58">
+                    <span className="rounded-full border border-[#3fb6c4]/10 bg-[#0e1518]/30 px-3 py-1 text-xs text-white/58">
                       {option.booking_token ? "Provider continuation ready" : "Provider continuation unavailable"}
                     </span>
                   </div>
                   <div className="mt-3 space-y-2">
                     {(option.segments || []).map((segment, index) => (
-                      <p key={`${option.id}-segment-${index}`} className="rounded-2xl border border-white/10 bg-black/24 px-3 py-2 text-sm text-white/58">
+                      <p key={`${option.id}-segment-${index}`} className="rounded-2xl border border-[#3fb6c4]/10 bg-[#0e1518]/24 px-3 py-2 text-sm text-white/58">
                         <span className="text-white/82">{segment.airline || "Airline"}</span> - {segment.from || "?"} to {segment.to || "?"} - {segment.depart_at || "departure TBD"}
                       </p>
                     ))}
@@ -2771,23 +2806,23 @@ function FlightDetailModal({
         {bookingOptions.length ? (
           <div className="mt-4 grid gap-3">
             {bookingOptions.map((option) => (
-              <article key={option.id} className="rounded-[22px] border border-white/10 bg-white/[0.055] p-4">
+              <article key={option.id} className="rounded-[22px] border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.055] p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <p className="text-base font-medium text-white">{option.title}</p>
                     {option.description ? <p className="mt-1 text-sm leading-relaxed text-white/54">{option.description}</p> : null}
                   </div>
-                  {option.price ? <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-black">{option.currency || activeFlight.currency || currencyCode} {option.price}</span> : null}
+                  {option.price ? <span className="rounded-full bg-[#3fb6c4] px-3 py-1 text-xs font-semibold text-[#06181a]">{option.currency || activeFlight.currency || currencyCode} {option.price}</span> : null}
                 </div>
                 {option.extensions?.length ? (
                   <div className="mt-3 flex flex-wrap gap-1.5">
                     {option.extensions.slice(0, 6).map((extension) => (
-                      <span key={extension} className="rounded-full border border-white/10 bg-black/25 px-2.5 py-1 text-[11px] text-white/58">{extension}</span>
+                      <span key={extension} className="rounded-full border border-[#3fb6c4]/10 bg-[#0e1518]/25 px-2.5 py-1 text-[11px] text-white/58">{extension}</span>
                     ))}
                   </div>
                 ) : null}
                 {option.link ? (
-                  <a href={option.link} target="_blank" rel="noreferrer" className="mt-4 inline-flex items-center gap-1.5 rounded-full border border-white/12 bg-white/[0.08] px-3 py-1.5 text-sm text-white/78 transition hover:bg-white hover:text-black">
+                  <a href={option.link} target="_blank" rel="noreferrer" className="mt-4 inline-flex items-center gap-1.5 rounded-full border border-[#3fb6c4]/12 bg-[#3fb6c4]/[0.08] px-3 py-1.5 text-sm text-white/78 transition hover:bg-[#3fb6c4] hover:text-[#06181a]">
                     Continue to provider <ExternalLink size={13} />
                   </a>
                 ) : null}
@@ -2802,8 +2837,8 @@ function FlightDetailModal({
 
 function EmptyResult({ icon, title, text }: { icon: ReactNode; title: string; text: string }) {
   return (
-    <div className="flex min-h-[280px] flex-col items-center justify-center rounded-[26px] border border-white/12 bg-black/62 p-8 text-center">
-      <div className="mb-3 rounded-full border border-white/10 bg-white/[0.07] p-3 text-white/68">{icon}</div>
+    <div className="flex min-h-[280px] flex-col items-center justify-center rounded-[26px] border border-[#3fb6c4]/12 bg-[#0e1518]/62 p-8 text-center">
+      <div className="mb-3 rounded-full border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.07] p-3 text-white/68">{icon}</div>
       <p className="text-lg font-medium text-white">{title}</p>
       <p className="mt-2 max-w-md text-sm leading-relaxed text-white/55">{text}</p>
     </div>
@@ -2834,9 +2869,9 @@ function SavedTripsDrawer({
   }
 
   return (
-    <div className="fixed inset-0 z-[80] bg-black/58 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-[80] bg-[#0e1518]/58 backdrop-blur-sm" onClick={onClose}>
       <aside
-        className="absolute right-0 top-0 h-full w-[min(94vw,430px)] overflow-auto border-l border-white/12 bg-black/88 p-5 shadow-[-28px_0_90px_rgba(0,0,0,0.45)]"
+        className="absolute right-0 top-0 h-full w-[min(94vw,430px)] overflow-auto border-l border-[#3fb6c4]/12 bg-[#0e1518]/88 p-5 shadow-[-28px_0_90px_rgba(0,0,0,0.45)]"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="mb-5 flex items-start justify-between gap-4">
@@ -2847,7 +2882,7 @@ function SavedTripsDrawer({
               {accountMode ? "Saved to your Wanderful account." : "Guest trips are saved in this browser only."}
             </p>
           </div>
-          <button type="button" onClick={onClose} className="rounded-full border border-white/12 bg-white/8 px-3 py-2 text-sm text-white/72 hover:bg-white/14">
+          <button type="button" onClick={onClose} className="rounded-full border border-[#3fb6c4]/12 bg-[#3fb6c4]/8 px-3 py-2 text-sm text-white/72 hover:bg-[#3fb6c4]/14">
             Close
           </button>
         </div>
@@ -2858,7 +2893,7 @@ function SavedTripsDrawer({
             onNewTrip();
             onClose();
           }}
-          className="mb-4 w-full rounded-full bg-white px-4 py-3 text-sm font-medium text-black transition hover:scale-[1.01]"
+          className="mb-4 w-full rounded-full bg-[#3fb6c4] px-4 py-3 text-sm font-medium text-[#06181a] transition hover:scale-[1.01]"
         >
           Start a new trip
         </button>
@@ -2866,7 +2901,7 @@ function SavedTripsDrawer({
         {trips.length ? (
           <div className="space-y-3">
             {trips.map((trip) => (
-              <article key={trip.id} className="rounded-[24px] border border-white/12 bg-white/[0.055] p-4">
+              <article key={trip.id} className="rounded-[24px] border border-[#3fb6c4]/12 bg-[#3fb6c4]/[0.055] p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <h4 className="text-lg font-medium leading-tight text-white">{trip.name}</h4>
@@ -2876,10 +2911,10 @@ function SavedTripsDrawer({
                   <MapPin className="mt-1 shrink-0 text-white/42" size={18} />
                 </div>
                 <div className="mt-4 flex gap-2">
-                  <button type="button" onClick={() => onLoad(trip)} className="flex-1 rounded-full bg-white px-3 py-2 text-sm font-medium text-black">
+                  <button type="button" onClick={() => onLoad(trip)} className="flex-1 rounded-full bg-[#3fb6c4] px-3 py-2 text-sm font-medium text-[#06181a]">
                     Open
                   </button>
-                  <button type="button" onClick={() => onDelete(trip.id)} className="rounded-full border border-white/12 bg-black/35 px-3 py-2 text-sm text-white/68 hover:bg-white/10">
+                  <button type="button" onClick={() => onDelete(trip.id)} className="rounded-full border border-[#3fb6c4]/12 bg-[#0e1518]/35 px-3 py-2 text-sm text-white/68 hover:bg-[#3fb6c4]/10">
                     Delete
                   </button>
                 </div>
@@ -2946,7 +2981,7 @@ function TripEssentials({ itinerary }: { itinerary: StructuredItineraryData }) {
   }
 
   return (
-    <section className="rounded-[28px] border border-white/12 bg-black/62 p-5 sm:p-6">
+    <section className="rounded-[28px] border border-[#3fb6c4]/12 bg-[#0e1518]/62 p-5 sm:p-6">
       <div className="mb-4">
         <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/45">Trip Essentials</p>
         <h4 className="mt-1 text-xl font-medium tracking-[-0.02em] text-white">Budget, packing, and logistics</h4>
@@ -2954,7 +2989,7 @@ function TripEssentials({ itinerary }: { itinerary: StructuredItineraryData }) {
 
       <div className="grid gap-4 lg:grid-cols-2">
         {budgetCategories.length ? (
-          <div className="rounded-[22px] border border-white/10 bg-white/[0.045] p-4">
+          <div className="rounded-[22px] border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.045] p-4">
             <div className="mb-3 flex items-center gap-2 text-white/55">
               <Wallet size={15} />
               <span className="text-[10px] font-medium uppercase tracking-[0.15em]">Budget breakdown</span>
@@ -2976,7 +3011,7 @@ function TripEssentials({ itinerary }: { itinerary: StructuredItineraryData }) {
         ) : null}
 
         {packingList.length ? (
-          <div className="rounded-[22px] border border-white/10 bg-white/[0.045] p-4">
+          <div className="rounded-[22px] border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.045] p-4">
             <div className="mb-3 flex items-center gap-2 text-white/55">
               <ListChecks size={15} />
               <span className="text-[10px] font-medium uppercase tracking-[0.15em]">Packing list</span>
@@ -2990,7 +3025,7 @@ function TripEssentials({ itinerary }: { itinerary: StructuredItineraryData }) {
         ) : null}
 
         {logistics.length ? (
-          <div className="rounded-[22px] border border-white/10 bg-white/[0.045] p-4">
+          <div className="rounded-[22px] border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.045] p-4">
             <div className="mb-3 flex items-center gap-2 text-white/55">
               <MapPin size={15} />
               <span className="text-[10px] font-medium uppercase tracking-[0.15em]">Logistics</span>
@@ -3052,7 +3087,7 @@ function DayTimeline({
 
   if (!days.length) {
     return (
-      <div className="rounded-[28px] border border-white/12 bg-black/62 p-5">
+      <div className="rounded-[28px] border border-[#3fb6c4]/12 bg-[#0e1518]/62 p-5">
         <div className="mb-4 flex items-center justify-between gap-3">
           <div>
             <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/45">Day Planner</p>
@@ -3068,7 +3103,7 @@ function DayTimeline({
   }
 
   return (
-    <section className="rounded-[30px] border border-white/10 bg-[linear-gradient(135deg,rgba(255,255,255,0.09),rgba(255,255,255,0.025))] p-5 shadow-[0_24px_90px_rgba(0,0,0,0.28)]">
+    <section className="rounded-[30px] border border-[#3fb6c4]/10 bg-[linear-gradient(135deg,rgba(63,182,196,0.09),rgba(63,182,196,0.025))] p-5 shadow-[0_24px_90px_rgba(0,0,0,0.28)]">
       <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/45">Day-by-day flow</p>
@@ -3076,7 +3111,7 @@ function DayTimeline({
             Your trip at a glance
           </h4>
         </div>
-        <div className="rounded-full border border-white/10 bg-black/35 px-3 py-1.5 text-[11px] font-medium text-white/62">
+        <div className="rounded-full border border-[#3fb6c4]/10 bg-[#0e1518]/35 px-3 py-1.5 text-[11px] font-medium text-white/62">
           Swipe horizontally
         </div>
       </div>
@@ -3087,7 +3122,8 @@ function DayTimeline({
             key={`${day.day}-${index}`}
             type="button"
             onClick={() => setSelectedDay(day)}
-            className="day-card group min-w-[280px] max-w-[320px] flex-1 rounded-[28px] border border-white/12 bg-black/48 p-4 text-left transition duration-300 hover:-translate-y-1 hover:border-white/30 hover:bg-black/62"
+            style={{ animationDelay: `${Math.min(index, 8) * 45}ms` }}
+            className="day-card card-hover card-enter group min-w-[280px] max-w-[320px] flex-1 rounded-[28px] border border-[#3fb6c4]/12 bg-[#0e1518]/48 p-4 text-left hover:border-[#3fb6c4]/30 hover:bg-[#0e1518]/62"
           >
             <div className="mb-4 flex items-start justify-between gap-3">
               <div>
@@ -3096,7 +3132,7 @@ function DayTimeline({
                   {day.title}
                 </h5>
               </div>
-              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-white text-sm font-semibold text-black shadow-[0_0_30px_rgba(255,255,255,0.22)]">
+              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#3fb6c4] text-sm font-semibold text-[#06181a] shadow-[0_0_30px_rgba(63,182,196,0.22)]">
                 {index + 1}
               </div>
             </div>
@@ -3105,7 +3141,7 @@ function DayTimeline({
 
             <div className="space-y-2">
               {day.bullets.slice(0, 4).map((bullet, bulletIndex) => (
-                <div key={`${day.day}-bullet-${bulletIndex}`} className="rounded-2xl border border-white/10 bg-black/44 px-3 py-2 text-sm leading-relaxed text-white/76">
+                <div key={`${day.day}-bullet-${bulletIndex}`} className="rounded-2xl border border-[#3fb6c4]/10 bg-[#0e1518]/44 px-3 py-2 text-sm leading-relaxed text-white/76">
                   {bullet}
                 </div>
               ))}
@@ -3162,9 +3198,9 @@ function DayDetailModal({
   const isRegeneratingThisDay = structuredDay ? regeneratingDay === structuredDay.day_number : false;
 
   return (
-    <div className="fixed inset-0 z-[90] grid place-items-center bg-black/68 px-4 backdrop-blur-md" onClick={onClose}>
+    <div className="fixed inset-0 z-[90] grid place-items-center bg-[#0e1518]/68 px-4 backdrop-blur-md" onClick={onClose}>
       <article
-        className="max-h-[86vh] w-[min(94vw,760px)] overflow-auto rounded-[34px] border border-white/16 bg-[linear-gradient(145deg,rgba(22,22,22,0.96),rgba(6,6,6,0.94))] p-6 shadow-[0_34px_110px_rgba(0,0,0,0.55)] sm:p-8"
+        className="max-h-[86vh] w-[min(94vw,760px)] overflow-auto rounded-[34px] border border-[#3fb6c4]/16 bg-[linear-gradient(145deg,rgba(22,22,22,0.96),rgba(6,6,6,0.94))] p-6 shadow-[0_34px_110px_rgba(0,0,0,0.55)] sm:p-8"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="mb-6 flex items-start justify-between gap-4">
@@ -3179,7 +3215,7 @@ function DayDetailModal({
                 type="button"
                 onClick={() => onRegenerateDay(structuredDay.day_number)}
                 disabled={regeneratingDay !== null}
-                className="rounded-full border border-white/12 bg-white/8 px-3 py-2 text-sm text-white/72 transition hover:bg-white/14 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-full border border-[#3fb6c4]/12 bg-[#3fb6c4]/8 px-3 py-2 text-sm text-white/72 transition hover:bg-[#3fb6c4]/14 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {isRegeneratingThisDay ? (
                   <span className="inline-flex items-center gap-2">
@@ -3190,7 +3226,7 @@ function DayDetailModal({
                 )}
               </button>
             ) : null}
-            <button type="button" onClick={onClose} className="rounded-full border border-white/12 bg-white/8 px-3 py-2 text-sm text-white/72 hover:bg-white/14">
+            <button type="button" onClick={onClose} className="rounded-full border border-[#3fb6c4]/12 bg-[#3fb6c4]/8 px-3 py-2 text-sm text-white/72 hover:bg-[#3fb6c4]/14">
               Close
             </button>
           </div>
@@ -3206,7 +3242,7 @@ function DayDetailModal({
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
             {(day.details.length ? day.details : day.bullets).slice(0, 12).map((detail, index) => (
-              <div key={`${day.day}-detail-${index}`} className="rounded-[22px] border border-white/10 bg-white/[0.055] p-4">
+              <div key={`${day.day}-detail-${index}`} className="rounded-[22px] border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.055] p-4">
                 <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/38">Stop {index + 1}</p>
                 <p className="mt-2 text-sm leading-relaxed text-white/76">{detail}</p>
               </div>
@@ -3327,7 +3363,7 @@ function StructuredDayEditor({
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-[22px] border border-white/10 bg-white/[0.045] p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-[22px] border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.045] p-4">
         <div>
           <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/38">Editable Schedule</p>
           <p className="mt-1 text-sm text-white/64">{(day.activities || []).length} activities - estimated {form.currency_code} {(day.estimated_cost || 0).toFixed(2)}</p>
@@ -3336,7 +3372,7 @@ function StructuredDayEditor({
       </div>
 
       {(day.activities || []).map((activity, index) => (
-        <article key={`${day.day_number}-${index}-${activity.title}`} className="rounded-[24px] border border-white/10 bg-white/[0.055] p-4">
+        <article key={`${day.day_number}-${index}-${activity.title}`} className="rounded-[24px] border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.055] p-4">
           <div className="grid gap-3 sm:grid-cols-[110px_1fr_120px]">
             <EditorInput label="Time" value={activity.time || ""} onChange={(value) => updateActivity(index, { time: value })} />
             <EditorInput label="Activity" value={activity.title} onChange={(value) => updateActivity(index, { title: value })} />
@@ -3353,17 +3389,17 @@ function StructuredDayEditor({
               rows={2}
               value={activity.description || ""}
               onChange={(event) => updateActivity(index, { description: event.target.value })}
-              className="w-full resize-none rounded-2xl border border-white/12 bg-black/42 px-3 py-2 text-sm text-white outline-none focus:border-white/34"
+              className="w-full resize-none rounded-2xl border border-[#3fb6c4]/12 bg-[#0e1518]/42 px-3 py-2 text-sm text-white outline-none focus:border-[#3fb6c4]/34"
             />
           </label>
           {activity.rank_reasons?.length ? (
             <div className="mt-3 flex flex-wrap gap-1.5">
-              {activity.rank_score ? <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-black">{activity.rank_score} match</span> : null}
-              {activity.rank_reasons.map((reason) => <span key={reason} className="rounded-full border border-white/10 px-2.5 py-1 text-[11px] text-white/52">{reason}</span>)}
+              {activity.rank_score ? <span className="rounded-full bg-[#3fb6c4] px-2.5 py-1 text-[11px] font-semibold text-[#06181a]">{activity.rank_score} match</span> : null}
+              {activity.rank_reasons.map((reason) => <span key={reason} className="rounded-full border border-[#3fb6c4]/10 px-2.5 py-1 text-[11px] text-white/52">{reason}</span>)}
             </div>
           ) : null}
           <div className="mt-4 flex flex-wrap gap-2">
-            <button type="button" onClick={() => loadAlternatives(index)} className="rounded-full bg-white px-3 py-1.5 text-sm font-medium text-black">
+            <button type="button" onClick={() => loadAlternatives(index)} className="rounded-full bg-[#3fb6c4] px-3 py-1.5 text-sm font-medium text-[#06181a]">
               Replace
             </button>
             {allDays.filter((candidate) => candidate.day_number !== day.day_number).map((candidate) => (
@@ -3371,7 +3407,7 @@ function StructuredDayEditor({
                 key={candidate.day_number}
                 type="button"
                 onClick={() => moveActivity(index, candidate.day_number)}
-                className="rounded-full border border-white/12 bg-white/[0.06] px-3 py-1.5 text-sm text-white/66 hover:bg-white/12"
+                className="rounded-full border border-[#3fb6c4]/12 bg-[#3fb6c4]/[0.06] px-3 py-1.5 text-sm text-white/66 hover:bg-[#3fb6c4]/12"
               >
                 Move to Day {candidate.day_number}
               </button>
@@ -3384,7 +3420,7 @@ function StructuredDayEditor({
       ))}
 
       {replacementIndex !== null ? (
-        <div className="rounded-[24px] border border-white/12 bg-black/52 p-4">
+        <div className="rounded-[24px] border border-[#3fb6c4]/12 bg-[#0e1518]/52 p-4">
           <div className="flex items-center justify-between gap-3">
             <p className="text-sm font-medium text-white">Replacement options</p>
             <button type="button" onClick={() => setReplacementIndex(null)} className="text-sm text-white/52 hover:text-white">Cancel</button>
@@ -3397,14 +3433,14 @@ function StructuredDayEditor({
                 key={`${alternative.title}-${alternative.source_url || ""}`}
                 type="button"
                 onClick={() => chooseAlternative(alternative)}
-                className="rounded-2xl border border-white/10 bg-white/[0.055] p-3 text-left transition hover:border-white/24 hover:bg-white/[0.1]"
+                className="rounded-2xl border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.055] p-3 text-left transition hover:border-[#3fb6c4]/24 hover:bg-[#3fb6c4]/[0.1]"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-sm font-medium text-white">{alternative.title}</p>
                     <p className="mt-1 text-xs leading-relaxed text-white/52">{alternative.description}</p>
                   </div>
-                  {alternative.rank_score ? <span className="rounded-full bg-white px-2 py-1 text-[10px] font-semibold text-black">{alternative.rank_score}</span> : null}
+                  {alternative.rank_score ? <span className="rounded-full bg-[#3fb6c4] px-2 py-1 text-[10px] font-semibold text-[#06181a]">{alternative.rank_score}</span> : null}
                 </div>
               </button>
             ))}
@@ -3433,7 +3469,7 @@ function EditorInput({
         type={type}
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="h-10 w-full rounded-2xl border border-white/12 bg-black/42 px-3 text-sm text-white outline-none focus:border-white/34"
+        className="h-10 w-full rounded-2xl border border-[#3fb6c4]/12 bg-[#0e1518]/42 px-3 text-sm text-white outline-none focus:border-[#3fb6c4]/34"
       />
     </label>
   );
@@ -3460,7 +3496,7 @@ function FlightControlField({
         value={value}
         placeholder={placeholder}
         onChange={(event) => onChange(event.target.value)}
-        className="h-11 w-full rounded-2xl border border-white/14 bg-black/60 px-3 text-sm text-white outline-none transition placeholder:text-white/34 focus:border-white/38 focus:bg-black/75"
+        className="h-11 w-full rounded-2xl border border-[#3fb6c4]/14 bg-[#0e1518]/60 px-3 text-sm text-white outline-none transition placeholder:text-white/34 focus:border-[#3fb6c4]/38 focus:bg-[#0e1518]/75"
       />
     </label>
   );
@@ -3468,7 +3504,7 @@ function FlightControlField({
 
 function ResultPill({ icon, title, text }: { icon: ReactNode; title: string; text: string }) {
   return (
-    <div className="rounded-[24px] border border-white/12 bg-black/58 p-4 shadow-[0_16px_48px_rgba(0,0,0,0.18)]">
+    <div className="rounded-[24px] border border-[#3fb6c4]/12 bg-[#0e1518]/58 p-4 shadow-[0_16px_48px_rgba(0,0,0,0.18)]">
       <div className="flex items-center gap-2 text-white/70">
         {icon}
         <p className="text-[10px] font-medium uppercase tracking-[0.16em]">{title}</p>

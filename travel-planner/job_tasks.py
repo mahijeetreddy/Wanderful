@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 
+from auth_store import get_user
 from data_collector import collect_trip_data
+from email_service import send_plan_ready
 from itinerary_schema import StructuredItinerary
 from main import TravelInputs
 from planner_engine import generate_structured_plan, regenerate_single_day, render_itinerary_markdown
 from runtime_store import cancellation_requested, get_plan_job, update_plan_job
+
+
+logger = logging.getLogger(__name__)
 
 
 def execute_plan_job(job_id: str, travel_input_values: dict[str, Any]) -> None:
@@ -44,6 +50,13 @@ def execute_plan_job(job_id: str, travel_input_values: dict[str, Any]) -> None:
             structured_itinerary=structured.model_dump(mode="json"),
             metrics=metrics,
         )
+        try:
+            job_record = get_plan_job(job_id)
+            recipient = get_user(job_record["user_id"])["email"] if job_record else None
+            if recipient:
+                send_plan_ready(recipient, job_id, travel_inputs.destination)
+        except Exception:
+            logger.exception("Failed to send plan-ready email", extra={"job_id": job_id})
     except Exception as exc:
         update_plan_job(
             job_id,

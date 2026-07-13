@@ -45,6 +45,7 @@ class Settings:
     smtp_port: int
     smtp_username: str
     smtp_password: str
+    smtp_from_email: str
     admin_notification_email: str
 
     @property
@@ -96,6 +97,7 @@ def get_settings() -> Settings:
         smtp_port=_int("SMTP_PORT", 587),
         smtp_username=os.getenv("SMTP_USERNAME", "").strip(),
         smtp_password=os.getenv("SMTP_PASSWORD", "").strip(),
+        smtp_from_email=os.getenv("SMTP_FROM_EMAIL", "").strip(),
         admin_notification_email=os.getenv("ADMIN_NOTIFICATION_EMAIL", "").strip(),
     )
 
