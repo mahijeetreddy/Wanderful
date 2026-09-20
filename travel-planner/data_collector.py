@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import hashlib
+import time
+import os
 from dataclasses import asdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
@@ -106,7 +108,7 @@ def collect_trip_data(travel_inputs: TravelInputs) -> dict[str, Any]:
             ),
         ),
     }
-    provider_results = _run_provider_tasks(provider_tasks)
+    provider_results, collection_metrics = _run_provider_tasks_with_metrics(provider_tasks)
     flight_result = str(provider_results["flights"])
     hotel_result = str(provider_results["hotels"])
     flight_options = normalize_flight_options(flight_result)
@@ -128,6 +130,7 @@ def collect_trip_data(travel_inputs: TravelInputs) -> dict[str, Any]:
             "estimated_nightly_hotel_budget": nightly_hotel_budget,
             "currency_code": travel_inputs.currency_code,
         },
+        "collection_metrics": collection_metrics,
         "options": build_options_payload(
             travel_inputs=travel_inputs,
             hotels=hotel_options,
@@ -272,17 +275,35 @@ def extract_price_insights(flight_provider_result: str) -> dict[str, Any] | None
 
 
 def _run_provider_tasks(tasks: dict[str, Any]) -> dict[str, str]:
+    return _run_provider_tasks_with_metrics(tasks)[0]
+
+
+def _run_provider_tasks_with_metrics(tasks: dict[str, Any]) -> tuple[dict[str, str], dict[str, Any]]:
+    started = time.perf_counter()
     results: dict[str, str] = {}
+    timings: dict[str, int] = {}
     max_workers = max(1, min(len(tasks), 4))
+
+    def timed(name: str, task: Any) -> str:
+        provider_started = time.perf_counter()
+        try:
+            return str(task())
+        finally:
+            timings[name] = round((time.perf_counter() - provider_started) * 1000)
+
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = {pool.submit(task): name for name, task in tasks.items()}
+        futures = {pool.submit(timed, name, task): name for name, task in tasks.items()}
         for future in as_completed(futures):
             name = futures[future]
             try:
                 results[name] = str(future.result())
             except Exception as exc:
                 results[name] = f"{name.replace('_', ' ').title()} failed: {exc}"
-    return results
+    return results, {
+        "provider_ms": timings,
+        "total_ms": round((time.perf_counter() - started) * 1000),
+        "parallel_workers": max_workers,
+    }
 
 
 def _cached_provider_call(provider: str, ttl_seconds: int, payload: dict[str, Any], call: Any) -> str:
@@ -292,9 +313,16 @@ def _cached_provider_call(provider: str, ttl_seconds: int, payload: dict[str, An
         increment_metric("cache_hits")
         return cached
     increment_metric("cache_misses")
-    result = str(provider_call(provider, call))
+    result = str(provider_call(provider, call, retries=_provider_retries()))
     set_cached_response(cache_key, provider, result, ttl_seconds)
     return result
+
+
+def _provider_retries() -> int:
+    try:
+        return max(0, min(2, int(os.getenv("PROVIDER_RETRIES", "1"))))
+    except ValueError:
+        return 1
 
 
 def _cache_key(provider: str, payload: dict[str, Any]) -> str:

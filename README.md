@@ -35,6 +35,10 @@ The application lives in [`travel-planner/`](travel-planner/) — see
 [`travel-planner/README.md`](travel-planner/README.md) for details specific to that
 project.
 
+Repository-level deployment and CI definitions live in `render.yaml` and
+`.github/workflows/ci.yml`. Their commands run against the nested `travel-planner/`
+application directory.
+
 ## Policies
 
 See [travel-planner/SECURITY.md](travel-planner/SECURITY.md),

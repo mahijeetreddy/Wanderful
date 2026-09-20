@@ -32,6 +32,7 @@ class BudgetCategory(BaseModel):
     category: str
     amount: float = Field(default=0, ge=0)
     note: str = ""
+    base_amount: float | None = None
 
 
 class StructuredItinerary(BaseModel):

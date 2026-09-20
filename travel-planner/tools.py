@@ -296,15 +296,18 @@ def fetch_flight_booking_options(booking_token: str, currency_code: str = "USD")
     cleaned_token = str(booking_token or "").strip()
     if not cleaned_token:
         raise ValueError("Missing booking_token.")
-    payload = _serpapi_get(
-        {
-            "engine": "google_flights",
-            "booking_token": cleaned_token,
-            "currency": currency_code.upper(),
-            "hl": "en",
-            "gl": "us",
-        }
-    )
+    try:
+        payload = _serpapi_get(
+            {
+                "engine": "google_flights",
+                "booking_token": cleaned_token,
+                "currency": currency_code.upper(),
+                "hl": "en",
+                "gl": "us",
+            }
+        )
+    except Exception as exc:
+        raise ValueError(_format_api_error("Booking options lookup failed", exc)) from exc
     return {
         "source": "SerpAPI Google Flights booking options",
         "booking_options": _normalize_booking_options(payload),
@@ -317,15 +320,18 @@ def fetch_return_flight_options(departure_token: str, currency_code: str = "USD"
     cleaned_token = str(departure_token or "").strip()
     if not cleaned_token:
         raise ValueError("Missing departure_token.")
-    payload = _serpapi_get(
-        {
-            "engine": "google_flights",
-            "departure_token": cleaned_token,
-            "currency": currency_code.upper(),
-            "hl": "en",
-            "gl": "us",
-        }
-    )
+    try:
+        payload = _serpapi_get(
+            {
+                "engine": "google_flights",
+                "departure_token": cleaned_token,
+                "currency": currency_code.upper(),
+                "hl": "en",
+                "gl": "us",
+            }
+        )
+    except Exception as exc:
+        raise ValueError(_format_api_error("Return flight lookup failed", exc)) from exc
     return {
         "source": "SerpAPI Google Flights return options",
         "return_options": _normalize_return_flight_options(payload, currency_code),

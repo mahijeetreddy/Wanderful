@@ -4,10 +4,12 @@ import os
 
 from rq import Queue, SimpleWorker, Worker
 
+from config import settings, validate_production_settings
 from runtime_store import rq_redis_client
 
 
 def main() -> None:
+    validate_production_settings(settings)
     connection = rq_redis_client()
     if not connection:
         raise RuntimeError("REDIS_URL is required to start the RQ worker.")

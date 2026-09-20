@@ -1,13 +1,17 @@
 from unittest.mock import patch
+from datetime import date, timedelta
 
 from runtime_store import update_plan_job
 
 
+START_DATE = date.today() + timedelta(days=30)
+END_DATE = START_DATE + timedelta(days=3)
+
 TRIP = {
     "origin": "LAX",
     "destination": "SEA",
-    "start_date": "2026-08-01",
-    "end_date": "2026-08-04",
+    "start_date": START_DATE.isoformat(),
+    "end_date": END_DATE.isoformat(),
     "budget": "2000",
     "currency_code": "USD",
     "adults": 1,
@@ -54,6 +58,17 @@ def test_api_404_is_json(client):
     response = client.get("/api/does-not-exist")
     assert response.status_code == 404
     assert response.is_json
+
+
+def test_readiness_requires_current_database_revision(client):
+    response = client.get("/health/ready")
+
+    assert response.status_code == 503
+    assert response.get_json()["checks"] == {
+        "database": True,
+        "schema": False,
+        "redis": True,
+    }
 
 
 def test_lock_route_updates_completed_job_and_enforces_ownership(client):

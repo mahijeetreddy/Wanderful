@@ -1,6 +1,15 @@
 import json
 
-from data_collector import normalize_weather
+from data_collector import _run_provider_tasks_with_metrics, normalize_weather
+
+
+def test_provider_collection_reports_bounded_parallel_timing():
+    results, metrics = _run_provider_tasks_with_metrics({"flights": lambda: "flight-data", "weather": lambda: "weather-data"})
+
+    assert results == {"flights": "flight-data", "weather": "weather-data"}
+    assert metrics["parallel_workers"] == 2
+    assert set(metrics["provider_ms"]) == {"flights", "weather"}
+    assert metrics["total_ms"] >= 0
 
 
 def test_normalize_weather_extracts_daily_summaries():

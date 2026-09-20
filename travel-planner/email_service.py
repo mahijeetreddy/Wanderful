@@ -73,7 +73,7 @@ def _send(recipient: str, subject: str, body: str, html_body: str | None = None)
         return
     message = EmailMessage()
     message["Subject"] = subject
-    message["From"] = settings.smtp_from_email or settings.admin_notification_email or settings.smtp_username
+    message["From"] = settings.admin_notification_email or settings.smtp_username
     message["To"] = recipient
     message.set_content(body)
     if html_body:

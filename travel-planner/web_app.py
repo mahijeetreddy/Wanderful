@@ -6,6 +6,7 @@ import secrets
 import sys
 import time as monotonic_time
 import uuid
+from dataclasses import replace
 from datetime import date, datetime, time, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -23,29 +24,45 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import sentry_sdk
+from alembic.config import Config
+from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from flask import Flask, g, jsonify, render_template, request, send_from_directory, session
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from sqlalchemy import text
 
 from auth_store import (
+    apply_disruption_scenario,
+    apply_trip_adjustment,
     authenticate_user,
     change_user_password,
     consume_password_reset,
+    create_journal_entry,
     create_password_reset,
     create_saved_trip,
     create_user,
+    delete_journal_entry,
     delete_user_account,
     delete_saved_trip,
+    disable_trip_sharing,
+    enable_trip_sharing,
+    get_public_trip_by_share_token,
+    get_saved_trip,
     get_user,
     get_user_preferences,
     init_auth_store,
+    list_journal_entries,
     list_pending_users,
     list_saved_trips,
+    record_activity_feedback,
     set_user_status,
+    update_journal_entry,
+    update_trip_budget,
+    update_trip_constraints,
     upsert_user_preferences,
 )
-from config import settings
+from config import settings, validate_production_settings
 from data_collector import (
     search_activity_alternatives,
     search_flight_options_from_instruction,
@@ -53,9 +70,10 @@ from data_collector import (
 )
 from database import engine
 from email_service import notify_admin_pending_user, send_password_reset
+from guidebook_store import create_or_reset_guidebook, get_guidebook
 from main import DATE_FORMAT, TravelInputs
 from observability import configure_json_logging
-from queue_service import enqueue_plan_job, enqueue_regenerate_day_job
+from queue_service import enqueue_guidebook_job, enqueue_plan_job, enqueue_regenerate_day_job
 from runtime_store import (
     active_job_count,
     begin_day_regeneration,
@@ -71,10 +89,21 @@ from runtime_store import (
 )
 from security import csrf_token, current_user, require_active_user, require_admin, validate_csrf
 from tools import fetch_flight_booking_options, fetch_return_flight_options
+from trip_intelligence import (
+    assess_trip,
+    build_budget_guardian,
+    build_disruption_scenarios,
+    build_live_view,
+    build_offline_pack,
+    learned_preference_tags,
+    normalize_budget_state,
+    preview_adjustment,
+)
 
 
 configure_json_logging()
 logger = logging.getLogger("wanderful.api")
+validate_production_settings(settings)
 
 if settings.sentry_dsn:
     sentry_sdk.init(
@@ -195,11 +224,14 @@ def health_live():
 
 @app.get("/health/ready")
 def health_ready():
-    checks = {"database": False, "redis": False}
+    checks = {"database": False, "schema": False, "redis": False}
     try:
         with engine.connect() as connection:
             connection.execute(text("select 1"))
+            current_revision = MigrationContext.configure(connection).get_current_revision()
+        expected_revision = ScriptDirectory.from_config(Config("alembic.ini")).get_current_head()
         checks["database"] = True
+        checks["schema"] = current_revision == expected_revision
     except Exception:
         pass
     checks["redis"] = redis_ready() if settings.redis_url else not settings.production
@@ -363,6 +395,264 @@ def trips_delete(trip_id: int):
     return jsonify({"ok": True})
 
 
+@app.get("/api/trips/<int:trip_id>/intelligence")
+@require_active_user
+def trip_intelligence_get(trip_id: int):
+    user = current_user(require_active=True)
+    trip = get_saved_trip(user["id"], trip_id)
+    if not trip:
+        return jsonify({"error": "Saved trip not found."}), 404
+    return jsonify(
+        {
+            "health": assess_trip(trip),
+            "live": build_live_view(trip),
+            "constraints": trip.get("constraints") or {},
+            "live_state": trip.get("liveState") or {},
+            "budget": build_budget_guardian(trip),
+            "disruption_history": trip.get("disruptionHistory") or [],
+        }
+    )
+
+
+@app.put("/api/trips/<int:trip_id>/budget")
+@require_active_user
+@limiter.limit("120 per hour")
+def trip_budget_put(trip_id: int):
+    user = current_user(require_active=True)
+    if not get_saved_trip(user["id"], trip_id):
+        return jsonify({"error": "Saved trip not found."}), 404
+    state = normalize_budget_state(_json_body())
+    trip = update_trip_budget(user["id"], trip_id, state)
+    return jsonify({"trip": trip, "budget": build_budget_guardian(trip or {})})
+
+
+@app.get("/api/trips/<int:trip_id>/offline-pack")
+@require_active_user
+def trip_offline_pack_get(trip_id: int):
+    user = current_user(require_active=True)
+    trip = get_saved_trip(user["id"], trip_id)
+    if not trip:
+        return jsonify({"error": "Saved trip not found."}), 404
+    return jsonify({"pack": build_offline_pack(trip)})
+
+
+@app.post("/api/trips/<int:trip_id>/disruptions")
+@require_active_user
+@limiter.limit("60 per hour")
+def trip_disruption_post(trip_id: int):
+    user = current_user(require_active=True)
+    trip = get_saved_trip(user["id"], trip_id)
+    if not trip:
+        return jsonify({"error": "Saved trip not found."}), 404
+    payload = _json_body()
+    event = _clean_text(payload.get("event"))
+    day_number = payload.get("day_number")
+    if day_number is not None and (not isinstance(day_number, int) or isinstance(day_number, bool)):
+        raise ValueError("day_number must be an integer.")
+    scenarios = build_disruption_scenarios(trip, event, day_number)
+    strategy = _clean_text(payload.get("strategy"))
+    if not bool(payload.get("apply")):
+        return jsonify({"scenarios": [{key: value for key, value in scenario.items() if key != "structuredItinerary"} for scenario in scenarios]})
+    selected = next((scenario for scenario in scenarios if scenario["strategy"] == strategy), None)
+    if selected is None:
+        raise ValueError("Choose a valid disruption scenario.")
+    applied_at = datetime.now(timezone.utc).isoformat()
+    live_state = {
+        "last_event": event,
+        "strategy": strategy,
+        "day_number": selected["day_number"],
+        "applied_at": applied_at,
+        "changes": selected["changes"],
+    }
+    history_entry = {
+        "event": event,
+        "strategy": strategy,
+        "title": selected["title"],
+        "changes": selected["changes"],
+        "cost_delta": selected["cost_delta"],
+        "applied_at": applied_at,
+    }
+    updated = apply_disruption_scenario(
+        user["id"], trip_id, selected["structuredItinerary"], live_state, history_entry
+    )
+    return jsonify({
+        "trip": updated,
+        "health": assess_trip(updated or trip),
+        "live": build_live_view(updated or trip),
+        "budget": build_budget_guardian(updated or trip),
+    })
+
+
+@app.put("/api/trips/<int:trip_id>/constraints")
+@require_active_user
+def trip_constraints_put(trip_id: int):
+    user = current_user(require_active=True)
+    constraints = _json_body().get("constraints")
+    if not isinstance(constraints, dict):
+        raise ValueError("constraints must be an object.")
+    if len(constraints) > 500:
+        raise ValueError("A trip cannot contain more than 500 activity constraints.")
+    trip = update_trip_constraints(user["id"], trip_id, constraints)
+    if not trip:
+        return jsonify({"error": "Saved trip not found."}), 404
+    return jsonify({"trip": trip, "health": assess_trip(trip)})
+
+
+@app.post("/api/trips/<int:trip_id>/live-adjust")
+@require_active_user
+@limiter.limit("30 per hour")
+def trip_live_adjust(trip_id: int):
+    user = current_user(require_active=True)
+    trip = get_saved_trip(user["id"], trip_id)
+    if not trip:
+        return jsonify({"error": "Saved trip not found."}), 404
+    payload = _json_body()
+    day_number = payload.get("day_number")
+    if day_number is not None and (not isinstance(day_number, int) or isinstance(day_number, bool)):
+        raise ValueError("day_number must be an integer.")
+    preview = preview_adjustment(trip, _clean_text(payload.get("event")), day_number)
+    if not bool(payload.get("apply")):
+        return jsonify({"preview": preview})
+    live_state = {
+        "last_event": preview["event"],
+        "day_number": preview["day_number"],
+        "applied_at": datetime.now(timezone.utc).isoformat(),
+        "changes": preview["changes"],
+    }
+    updated = apply_trip_adjustment(
+        user["id"], trip_id, preview["structuredItinerary"], live_state
+    )
+    return jsonify(
+        {
+            "trip": updated,
+            "health": assess_trip(updated or trip),
+            "live": build_live_view(updated or trip),
+        }
+    )
+
+
+@app.post("/api/trips/<int:trip_id>/feedback")
+@require_active_user
+@limiter.limit("120 per hour")
+def trip_feedback_create(trip_id: int):
+    user = current_user(require_active=True)
+    if not get_saved_trip(user["id"], trip_id):
+        return jsonify({"error": "Saved trip not found."}), 404
+    payload = _json_body()
+    if not _clean_text(payload.get("title")):
+        raise ValueError("Feedback title is required.")
+    preferences = record_activity_feedback(user["id"], payload)
+    return jsonify({"preferences": preferences}), 201
+
+
+@app.get("/api/trips/<int:trip_id>/journal")
+@require_active_user
+def journal_list(trip_id: int):
+    user = current_user(require_active=True)
+    entries = list_journal_entries(user["id"], trip_id)
+    if entries is None:
+        return jsonify({"error": "Saved trip not found."}), 404
+    return jsonify({"entries": entries})
+
+
+@app.post("/api/trips/<int:trip_id>/journal")
+@require_active_user
+@limiter.limit("60 per hour")
+def journal_create(trip_id: int):
+    user = current_user(require_active=True)
+    payload = _json_body()
+    body = str(payload.get("body") or "").strip()
+    if not body:
+        return jsonify({"error": "Journal entry body is required."}), 400
+    entry = create_journal_entry(user["id"], trip_id, body[:10000])
+    if entry is None:
+        return jsonify({"error": "Saved trip not found."}), 404
+    return jsonify({"entry": entry}), 201
+
+
+@app.patch("/api/trips/<int:trip_id>/journal/<int:entry_id>")
+@require_active_user
+def journal_update(trip_id: int, entry_id: int):
+    user = current_user(require_active=True)
+    payload = _json_body()
+    body = str(payload.get("body") or "").strip()
+    if not body:
+        return jsonify({"error": "Journal entry body is required."}), 400
+    entry = update_journal_entry(user["id"], trip_id, entry_id, body[:10000])
+    if entry is None:
+        return jsonify({"error": "Journal entry not found."}), 404
+    return jsonify({"entry": entry})
+
+
+@app.delete("/api/trips/<int:trip_id>/journal/<int:entry_id>")
+@require_active_user
+def journal_delete(trip_id: int, entry_id: int):
+    user = current_user(require_active=True)
+    if not delete_journal_entry(user["id"], trip_id, entry_id):
+        return jsonify({"error": "Journal entry not found."}), 404
+    return jsonify({"ok": True})
+
+
+@app.get("/api/trips/<int:trip_id>/guidebook")
+@require_active_user
+def guidebook_get(trip_id: int):
+    user = current_user(require_active=True)
+    guidebook = get_guidebook(user["id"], trip_id)
+    if guidebook is None:
+        return jsonify({"error": "Guidebook not found."}), 404
+    return jsonify({"guidebook": guidebook})
+
+
+@app.post("/api/trips/<int:trip_id>/guidebook")
+@require_active_user
+@limiter.limit("10 per hour")
+def guidebook_generate(trip_id: int):
+    user = current_user(require_active=True)
+    trip = get_saved_trip(user["id"], trip_id)
+    if not trip:
+        return jsonify({"error": "Saved trip not found."}), 404
+    guidebook = create_or_reset_guidebook(user["id"], trip_id)
+    if guidebook is None:
+        return jsonify({"error": "Saved trip not found."}), 404
+    form = trip.get("form") or {}
+    enqueue_guidebook_job(
+        guidebook["id"],
+        trip.get("destination", ""),
+        str(form.get("start_date") or ""),
+        str(form.get("end_date") or ""),
+        str(form.get("interests") or ""),
+    )
+    return jsonify({"guidebook": guidebook}), 202
+
+
+@app.post("/api/trips/<int:trip_id>/share")
+@require_active_user
+def trip_share_enable(trip_id: int):
+    user = current_user(require_active=True)
+    result = enable_trip_sharing(user["id"], trip_id)
+    if result is None:
+        return jsonify({"error": "Saved trip not found."}), 404
+    return jsonify(result)
+
+
+@app.delete("/api/trips/<int:trip_id>/share")
+@require_active_user
+def trip_share_disable(trip_id: int):
+    user = current_user(require_active=True)
+    if not disable_trip_sharing(user["id"], trip_id):
+        return jsonify({"error": "Trip is not currently shared."}), 404
+    return jsonify({"ok": True})
+
+
+@app.get("/api/share/<token>")
+@limiter.limit("120 per hour")
+def public_shared_trip(token: str):
+    trip = get_public_trip_by_share_token(token)
+    if not trip:
+        return jsonify({"error": "This share link is invalid or no longer active."}), 404
+    return jsonify({"trip": trip})
+
+
 @app.delete("/api/account")
 def account_delete():
     user = current_user()
@@ -404,6 +694,12 @@ def create_plan_job_route():
         return jsonify({"error": "A planning job is already running for this account."}), 409
     payload = _json_body()
     travel_inputs = _validate_payload(payload)
+    learned_tags = learned_preference_tags(get_user_preferences(user["id"]).get("memory") or {})
+    if learned_tags:
+        travel_inputs = replace(
+            travel_inputs,
+            interests=f"{travel_inputs.interests}; learned preferences: {', '.join(learned_tags)}",
+        )
     idempotency_key = request.headers.get("Idempotency-Key") or _clean_text(payload.get("idempotency_key"))
     if not idempotency_key:
         return jsonify({"error": "Idempotency-Key header is required."}), 400

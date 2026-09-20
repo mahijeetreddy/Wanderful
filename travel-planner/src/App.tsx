@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { AlertTriangle, ArrowDown, Building2, CalendarDays, Clock, Cloud, CloudFog, CloudLightning, CloudRain, CloudSnow, Copy, Download, ExternalLink, FileText, ListChecks, Loader2, Lock, MapPin, Plane, RotateCcw, Search, Sparkles, Sun, Users, Wallet } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowRight, BookOpen, Bookmark, Braces, Building2, CalendarDays, Check, CircleUserRound, Clock, Cloud, CloudFog, CloudLightning, CloudRain, CloudSnow, Compass, Copy, Download, ExternalLink, FileText, ListChecks, Loader2, Lock, MapPin, Plane, RotateCcw, Route, Search, Share2, Sparkles, Sun, Users, Wallet } from "lucide-react";
 import gsap from "gsap";
 import L from "leaflet";
 import { MapContainer, Marker, Popup, TileLayer, useMap } from "react-leaflet";
@@ -10,245 +10,36 @@ import "leaflet/dist/leaflet.css";
 import { apiFetch } from "./api/client";
 import { AdminPanel } from "./features/admin/AdminPanel";
 import { PasswordResetModal } from "./features/auth/PasswordResetModal";
+import { GuidebookPanel } from "./features/guidebook/GuidebookPanel";
 import { JobHistoryPanel } from "./features/jobs/JobHistoryPanel";
+import { JournalPanel } from "./features/journal/JournalPanel";
+import { TripIntelligencePanel } from "./features/intelligence/TripIntelligencePanel";
+import { InfoSections } from "./features/marketing/InfoSections";
+import type {
+  AuthMode,
+  AuthUser,
+  Coordinates,
+  DayPlan,
+  FlightBookingOption,
+  FlightOption,
+  FlightRecoverySuggestion,
+  HotelOption,
+  PlannerForm,
+  PlannerOptions,
+  PlanJob,
+  PlanResponse,
+  PriceInsights,
+  ResultTab,
+  SavedTrip,
+  StructuredActivityData,
+  StructuredDayData,
+  StructuredItineraryData,
+  UserPreferences,
+  WeatherInfo,
+} from "./domain/travel";
 
 const VIDEO_URL =
   "https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260510_060007_60275ce7-030c-4668-a160-8f364ec537d3.mp4";
-
-type PlannerForm = {
-  origin: string;
-  destination: string;
-  start_date: string;
-  end_date: string;
-  budget: string;
-  currency_code: string;
-  adults: string;
-  interests: string;
-};
-
-type PlanResponse = {
-  itinerary?: string;
-  options?: PlannerOptions;
-  structured_itinerary?: StructuredItineraryData;
-  metrics?: Record<string, unknown>;
-  error?: string;
-};
-
-type PlanJob = {
-  id: string;
-  status: "queued" | "collecting" | "planning" | "regenerating" | "complete" | "failed" | "cancelled";
-  progress: string;
-  options?: PlannerOptions;
-  itinerary?: string;
-  structured_itinerary?: StructuredItineraryData;
-  metrics?: Record<string, unknown>;
-  error?: string;
-};
-
-type StructuredActivityData = {
-  time?: string;
-  period?: string;
-  title: string;
-  description?: string;
-  location?: string;
-  estimated_cost?: number;
-  indoor?: boolean;
-  source_url?: string;
-  rank_score?: number;
-  rank_reasons?: string[];
-};
-
-type StructuredDayData = {
-  day_number: number;
-  date: string;
-  title: string;
-  summary?: string;
-  activities?: StructuredActivityData[];
-  estimated_cost?: number;
-  weather_note?: string;
-  transit_note?: string;
-  backup_plan?: string;
-};
-
-type BudgetCategoryData = {
-  category: string;
-  amount?: number;
-  note?: string;
-};
-
-type StructuredItineraryData = {
-  trip_summary?: string;
-  currency_code?: string;
-  recommended_hotel_id?: string;
-  recommended_flight_id?: string;
-  locked_hotel_id?: string;
-  locked_flight_id?: string;
-  days?: StructuredDayData[];
-  budget_categories?: BudgetCategoryData[];
-  packing_list?: string[];
-  logistics?: string[];
-  risks?: string[];
-  estimated_total?: number;
-  validation_warnings?: string[];
-};
-
-type ResultTab = "itinerary" | "hotels" | "flights" | "raw";
-
-type PriceInsights = {
-  lowest_price?: number | null;
-  price_level?: string | null;
-  typical_price_range?: [number, number] | null;
-};
-
-type WeatherDay = {
-  date: string;
-  temp_high?: number | null;
-  temp_low?: number | null;
-  precip_probability?: number | null;
-  condition_group?: string | null;
-  conditions_label?: string | null;
-};
-
-type WeatherInfo = {
-  units?: string;
-  days: WeatherDay[];
-};
-
-type PlannerOptions = {
-  hotels: HotelOption[];
-  flights: FlightOption[];
-  flight_recovery: FlightRecoverySuggestion[];
-  map_center: Coordinates | null;
-  price_insights?: PriceInsights | null;
-  weather?: WeatherInfo | null;
-};
-
-type Coordinates = {
-  lat: number;
-  lng: number;
-};
-
-type HotelOption = {
-  id: string;
-  name: string;
-  description?: string | null;
-  hotel_class?: string | null;
-  rating?: number | string | null;
-  reviews?: number | string | null;
-  nightly_rate?: string | null;
-  extracted_nightly_rate?: number | null;
-  estimated_total?: number | null;
-  currency?: string | null;
-  amenities?: string[];
-  link?: string | null;
-  coordinates?: Coordinates | null;
-  image_thumbnail?: string | null;
-  image_url?: string | null;
-  rank?: number;
-  rank_score?: number;
-  rank_reasons?: string[];
-  distance_km?: number | null;
-};
-
-type FlightSegment = {
-  airline?: string | null;
-  flight_number?: string | null;
-  from?: string | null;
-  to?: string | null;
-  depart_at?: string | null;
-  arrive_at?: string | null;
-  airplane?: string | null;
-  travel_class?: string | null;
-  duration_minutes?: number | null;
-};
-
-type FlightLayover = {
-  id?: string | null;
-  name?: string | null;
-  duration?: number | null;
-  overnight?: boolean;
-};
-
-type CarbonEmissions = {
-  this_flight?: number | null;
-  typical_for_this_route?: number | null;
-  difference_percent?: number | null;
-};
-
-type FlightOption = {
-  id: string;
-  total_price?: number | string | null;
-  currency?: string | null;
-  total_duration_minutes?: number | null;
-  layovers?: FlightLayover[];
-  departure_token?: string | null;
-  booking_token?: string | null;
-  reference?: string | null;
-  carbon_emissions?: CarbonEmissions | null;
-  segments?: FlightSegment[];
-  has_return_details?: boolean;
-  rank?: number;
-  rank_score?: number;
-  rank_reasons?: string[];
-};
-
-type FlightBookingOption = {
-  id: string;
-  title: string;
-  price?: number | string | null;
-  currency?: string | null;
-  link?: string | null;
-  description?: string | null;
-  extensions?: string[];
-};
-
-type FlightRecoverySuggestion = {
-  type: string;
-  label: string;
-  instruction: string;
-};
-
-type DayPlan = {
-  day: string;
-  title: string;
-  summary: string;
-  bullets: string[];
-  details: string[];
-};
-
-type SavedTrip = {
-  id: string;
-  name: string;
-  destination: string;
-  dateRange: string;
-  savedAt: string;
-  form: PlannerForm;
-  itinerary: string;
-  options: PlannerOptions;
-  structuredItinerary?: StructuredItineraryData;
-  resultTab: ResultTab;
-};
-
-type AuthUser = {
-  id: number;
-  name: string;
-  email: string;
-  status?: "pending" | "active" | "rejected";
-  role?: "user" | "admin";
-};
-
-type AuthMode = "login" | "register";
-
-type UserPreferences = {
-  budget_style: string;
-  travel_style: string;
-  likes: string[];
-  dislikes: string[];
-  home_airport: string;
-  preferred_currency: string;
-  date_of_birth: string;
-  age: number | null;
-};
 
 const initialForm: PlannerForm = {
   origin: "",
@@ -324,6 +115,9 @@ function App() {
     () => new URLSearchParams(window.location.search).get("admin_panel") === "1",
   );
   const [jobHistoryOpen, setJobHistoryOpen] = useState(false);
+  const [journalTrip, setJournalTrip] = useState<SavedTrip | null>(null);
+  const [guidebookTrip, setGuidebookTrip] = useState<SavedTrip | null>(null);
+  const [intelligenceTrip, setIntelligenceTrip] = useState<SavedTrip | null>(null);
   const [passwordResetToken, setPasswordResetToken] = useState(
     () => new URLSearchParams(window.location.search).get("reset_token") || "",
   );
@@ -590,11 +384,15 @@ function App() {
       return;
     }
     try {
-      await apiFetch(`/api/plan-jobs/${activePlanJobId}/locks`, {
+      const response = await apiFetch(`/api/plan-jobs/${activePlanJobId}/locks`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(locks),
       });
+      const payload = (await parsePlanResponse(response)) as PlanResponse & { job?: PlanJob };
+      if (response.ok && payload.job?.structured_itinerary) {
+        setStructuredItinerary(payload.job.structured_itinerary);
+      }
     } catch {
       // The lock still applies locally for this session even if persistence fails.
     }
@@ -824,6 +622,34 @@ function App() {
     }
   };
 
+  const toggleTripSharing = async (tripId: string) => {
+    const trip = savedTrips.find((item) => item.id === tripId);
+    if (!trip) return;
+    try {
+      if (trip.shareToken) {
+        const response = await apiFetch(`/api/trips/${tripId}/share`, { method: "DELETE" });
+        if (!response.ok) {
+          throw new Error("Could not stop sharing this trip.");
+        }
+        setSavedTrips((current) =>
+          current.map((item) => (item.id === tripId ? { ...item, shareToken: null } : item)),
+        );
+      } else {
+        const response = await apiFetch(`/api/trips/${tripId}/share`, { method: "POST" });
+        const payload = (await parsePlanResponse(response)) as PlanResponse & { shareToken?: string };
+        if (!response.ok || !payload.shareToken) {
+          throw new Error(payload.error || "Could not create a share link.");
+        }
+        const shareToken = payload.shareToken;
+        setSavedTrips((current) =>
+          current.map((item) => (item.id === tripId ? { ...item, shareToken } : item)),
+        );
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not update trip sharing.");
+    }
+  };
+
   const savePreferencesFromCurrentTrip = async () => {
     if (!authUser) {
       return;
@@ -880,7 +706,8 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-black text-white overflow-x-hidden" style={{ fontFamily: "'Inter', sans-serif" }}>
+    <div className="app-shell min-h-screen overflow-x-hidden bg-black text-white">
+      <FuturisticCursor />
       <div ref={videoWrapRef} className="fixed inset-0 z-0 origin-center scale-[1.08]">
         <video
           ref={videoRef}
@@ -893,15 +720,16 @@ function App() {
           onLoadedMetadata={handleLoadedMetadata}
         />
       </div>
-      <div className="fixed inset-0 z-10 bg-[#0e1518]/48" />
-      <div className="fixed inset-0 z-10 bg-[radial-gradient(circle_at_center,rgba(63,182,196,0.07),transparent_30%,rgba(0,0,0,0.76)_100%)]" />
-      <div className="fixed inset-0 z-10 bg-[linear-gradient(180deg,rgba(0,0,0,0.62)_0%,rgba(0,0,0,0.18)_30%,rgba(0,0,0,0.26)_55%,rgba(0,0,0,0.78)_100%)]" />
+      <div className="fixed inset-0 z-10 bg-[#071012]/38" />
+      <div className="fixed inset-0 z-10 bg-[radial-gradient(circle_at_72%_38%,rgba(53,198,204,0.10),transparent_28%,rgba(0,0,0,0.78)_100%)]" />
+      <div className="fixed inset-0 z-10 bg-[linear-gradient(180deg,rgba(2,7,9,0.68)_0%,rgba(2,7,9,0.16)_30%,rgba(2,7,9,0.42)_62%,#05090a_100%)]" />
       <div ref={presenceRef} className="hero-presence fixed inset-0 z-10 pointer-events-none" />
 
-      <header className="fixed top-0 z-50 w-full px-4 py-4 text-white sm:px-8 sm:py-6">
-        <div className="site-header-shell mx-auto flex max-w-7xl items-center justify-between gap-3 rounded-full px-3 py-2 sm:px-4">
-          <a href="#" className="shrink-0 px-2 text-[17px] font-semibold tracking-tight">
-            Wanderful<sup className="ml-0.5 text-[9px]">TM</sup>
+      <header className="fixed top-0 z-50 w-full px-3 py-3 text-white sm:px-6 sm:py-5">
+        <div className="site-header-shell mx-auto flex max-w-[1340px] items-center justify-between gap-2 rounded-[22px] px-2.5 py-2 sm:rounded-full sm:px-3">
+          <a href="#" aria-label="Wanderful home" className="group flex shrink-0 items-center gap-2.5 pr-1 sm:pr-3">
+            <span className="brand-mark grid h-9 w-9 place-items-center rounded-[13px] font-serif text-xl italic text-[#06181a]">W</span>
+            <span className="hidden text-[15px] font-semibold leading-none tracking-[-0.02em] sm:inline sm:text-[17px]">Wanderful<span className="text-[#66d3d9]">.</span><span className="mt-1 hidden text-[8px] font-medium uppercase tracking-[0.18em] text-white/38 sm:block">Travel intelligence</span></span>
           </a>
 
           <nav className="hidden items-center gap-1 lg:flex">
@@ -914,16 +742,17 @@ function App() {
               <a
                 key={item}
                 href={href}
-                className="rounded-full px-4 py-2 text-[11px] font-medium tracking-[0.12em] text-white/78 transition-colors duration-200 hover:bg-[#3fb6c4]/10 hover:text-white"
+                className="nav-link rounded-full px-4 py-2 text-[10px] font-medium tracking-[0.14em] text-white/62 transition-colors duration-200 hover:text-white"
               >
                 {item.toUpperCase()}
               </a>
             ))}
           </nav>
 
-          <div className="flex shrink-0 items-center gap-1.5">
+          <div className="flex shrink-0 items-center gap-1">
             <button
               type="button"
+              aria-label={authUser ? `Open profile for ${authUser.name}` : "Sign in"}
               onClick={() => {
                 if (authUser) {
                   setProfileOpen(true);
@@ -932,17 +761,18 @@ function App() {
                 setAuthMode("login");
                 setAuthOpen(true);
               }}
-              className="hidden rounded-full px-3 py-2 text-[10px] font-medium tracking-[0.12em] text-white/78 transition hover:bg-[#3fb6c4]/10 hover:text-white sm:block sm:text-[11px]"
+              className="header-icon-button inline-flex h-10 w-10 items-center justify-center rounded-full text-white/72 transition hover:text-white sm:w-auto sm:gap-2 sm:px-3"
             >
-              {authUser ? `HI, ${authUser.name.split(" ")[0].toUpperCase()}` : "SIGN IN"}
+              <CircleUserRound size={17} strokeWidth={1.7} /><span className="hidden text-[10px] font-medium tracking-[0.12em] sm:inline">{authUser ? authUser.name.split(" ")[0].toUpperCase() : "SIGN IN"}</span>
             </button>
 
             <button
               type="button"
+              aria-label="Open saved trips"
               onClick={() => setSavedTripsOpen(true)}
-              className="hidden rounded-full px-3 py-2 text-[10px] font-medium tracking-[0.12em] text-white/78 transition hover:bg-[#3fb6c4]/10 hover:text-white md:block sm:text-[11px]"
+              className="header-icon-button inline-flex h-10 w-10 items-center justify-center rounded-full text-white/72 transition hover:text-white md:w-auto md:gap-2 md:px-3"
             >
-              SAVED TRIPS
+              <Bookmark size={16} strokeWidth={1.7} /><span className="hidden text-[10px] font-medium tracking-[0.12em] md:inline">SAVED TRIPS</span>
             </button>
 
             {authUser?.status === "active" ? (
@@ -960,80 +790,100 @@ function App() {
             <button
               type="button"
               onClick={scrollToPlanner}
-              className="rounded-full bg-[#3fb6c4] px-4 py-2.5 text-[10px] font-semibold tracking-[0.12em] text-[#06181a] transition hover:scale-[1.02] hover:shadow-[0_0_28px_rgba(63,182,196,0.18)] sm:px-5 sm:text-[11px]"
+              className="primary-cta inline-flex h-10 items-center gap-2 rounded-full px-3.5 text-[10px] font-semibold tracking-[0.12em] text-[#06181a] transition sm:px-5"
             >
-              GET ROAMING
+              <span className="sm:hidden">PLAN</span><span className="hidden sm:inline">GET ROAMING</span><ArrowRight size={14} />
             </button>
           </div>
         </div>
       </header>
 
       <main className="relative z-20 min-h-screen">
-        <section className="relative flex min-h-screen flex-col items-center justify-between px-4 pb-14 pt-32 sm:pt-36">
-          <div
-            className={`relative z-20 w-[min(92vw,980px)] text-center transition-all duration-1000 ${
-              heroVisible ? "translate-y-0 opacity-100" : "translate-y-6 opacity-0"
-            }`}
-          >
-            <h1 className="font-inter text-[clamp(40px,5.4vw,72px)] font-normal leading-[1.1] tracking-[-0.02em] text-white">
-              Venture without edges.
-            </h1>
-            <h2 className="font-inter text-[clamp(40px,5.4vw,72px)] font-normal leading-[1.1] tracking-[-0.02em] text-[rgba(255,255,255,0.55)]">
-              Uncover with keen instinct.
-            </h2>
-          </div>
+        <section className="hero-section relative min-h-screen px-4 pb-12 pt-28 sm:px-8 sm:pb-16 sm:pt-36 lg:px-10">
+          <div className="mx-auto flex min-h-[calc(100vh-11rem)] max-w-[1340px] flex-col justify-end">
+            <div className="grid items-end gap-10 lg:grid-cols-[1.35fr_.65fr] lg:gap-16">
+              <div className={`relative z-20 transition-all duration-1000 ${heroVisible ? "translate-y-0 opacity-100" : "translate-y-6 opacity-0"}`}>
+                <div className="mb-6 flex items-center gap-3 text-[10px] font-medium uppercase tracking-[0.2em] text-white/58">
+                  <span className="h-px w-10 bg-[#65d2d9]" /> AI-native travel planning <span className="text-[#f0b86a]">01 / Wander differently</span>
+                </div>
+                <h1 className="hero-title max-w-[900px] text-[clamp(54px,7.4vw,110px)] font-medium leading-[.88] tracking-[-0.065em] text-white">
+                  Venture farther.
+                  <span className="mt-2 block font-serif font-normal italic tracking-[-0.04em] text-white/62">Stay in rhythm.</span>
+                </h1>
+                <p className="mt-7 max-w-xl text-base leading-7 text-white/68 sm:text-lg">
+                  A travel workspace that plans with live context, protects what matters, and adapts the moment your day changes.
+                </p>
+                <div className="mt-8 flex flex-wrap items-center gap-3">
+                  <button type="button" onClick={scrollToPlanner} className="primary-cta inline-flex items-center gap-3 rounded-full px-6 py-3.5 text-sm font-semibold text-[#06181a]">
+                    Build my journey <ArrowRight size={16} />
+                  </button>
+                  <button type="button" onClick={() => setSavedTripsOpen(true)} className="secondary-cta inline-flex items-center gap-2 rounded-full px-5 py-3.5 text-sm text-white/78">
+                    <Bookmark size={15} /> Open travel workspace
+                  </button>
+                </div>
+              </div>
 
-          <div
-            className={`relative z-20 flex w-[min(92vw,720px)] flex-col items-center gap-6 text-center transition-all delay-300 duration-1000 ${
-              bottomVisible ? "translate-y-0 opacity-100" : "translate-y-6 opacity-0"
-            }`}
-          >
-            <p className="max-w-[620px] text-center text-[15px] leading-relaxed text-white drop-shadow-[0_2px_18px_rgba(0,0,0,0.55)]">
-              Our smart itineraries shape around you - your rhythm, your vibe, your hunger for adventure.
-              <span className="text-white/55"> Each getaway is tailored, seamless, and wholly yours.</span>
-            </p>
-            <button
-              type="button"
-              onClick={scrollToPlanner}
-              className="rounded-full bg-[#3fb6c4] px-8 py-3.5 text-[15px] font-medium text-[#06181a] transition-all duration-300 hover:scale-[1.03] hover:shadow-[0_0_32px_4px_rgba(63,182,196,0.2)] active:scale-[0.97]"
-            >
-              Plan my escape today
-            </button>
-            <div className="flex items-center gap-2 text-[11px] font-medium tracking-[0.14em] text-white/70">
-              <Lock size={13} strokeWidth={1.5} />
-              SECURE BY DESIGN.
+              <div className={`hero-intelligence-card relative z-20 rounded-[30px] p-5 transition-all delay-200 duration-1000 sm:p-6 ${bottomVisible ? "translate-y-0 opacity-100" : "translate-y-6 opacity-0"}`}>
+                <div className="flex items-center justify-between gap-3">
+                  <div><p className="text-[9px] font-medium uppercase tracking-[0.18em] text-white/42">Trip intelligence</p><p className="mt-1 text-sm font-medium text-white">Your plan stays alive</p></div>
+                  <span className="inline-flex items-center gap-2 rounded-full border border-emerald-200/15 bg-emerald-200/8 px-2.5 py-1 text-[9px] font-medium uppercase tracking-[0.14em] text-emerald-100/80"><span className="h-1.5 w-1.5 rounded-full bg-emerald-300 shadow-[0_0_12px_rgba(110,231,183,.8)]"/>Live</span>
+                </div>
+                <div className="mt-6 flex items-center justify-between">
+                  <div><p className="text-3xl font-medium tracking-[-.04em] text-white">LAX</p><p className="mt-1 text-xs text-white/42">Los Angeles</p></div>
+                  <div className="route-line mx-5 flex flex-1 items-center"><Plane size={15} className="shrink-0 text-[#65d2d9]" /></div>
+                  <div className="text-right"><p className="text-3xl font-medium tracking-[-.04em] text-white">HND</p><p className="mt-1 text-xs text-white/42">Tokyo</p></div>
+                </div>
+                <div className="mt-6 grid grid-cols-3 gap-2">
+                  {["Health checked", "Locks protected", "Ready to adapt"].map((label, index) => <div key={label} className="rounded-2xl border border-white/8 bg-white/[.035] p-3"><span className="text-[10px] text-[#65d2d9]">0{index + 1}</span><p className="mt-2 text-xs leading-4 text-white/64">{label}</p></div>)}
+                </div>
+                <div className="mt-4 flex items-center gap-2 text-xs text-white/46"><Sparkles size={13} className="text-[#f0b86a]"/>Weather shifted. Indoor backup is ready.</div>
+              </div>
+            </div>
+
+            <div className={`mt-12 flex flex-wrap items-center justify-between gap-4 border-t border-white/10 pt-5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/38 transition-all delay-300 duration-1000 ${bottomVisible ? "opacity-100" : "opacity-0"}`}>
+              <div className="flex flex-wrap gap-x-7 gap-y-2"><span>Live context</span><span>Constraint-aware</span><span>Personal travel memory</span></div>
+              <span className="inline-flex items-center gap-2"><Lock size={12}/>Private by design</span>
             </div>
           </div>
         </section>
 
-        <section id="planner" ref={plannerRef} className="relative z-30 min-h-screen scroll-mt-28 px-4 py-24 sm:px-8 lg:px-10">
-          <div className="mx-auto grid w-full max-w-6xl gap-6 lg:grid-cols-[0.9fr_1.1fr]">
-            <div className="liquid-glass rounded-[32px] p-6 sm:p-8">
+        <section id="planner" ref={plannerRef} className="planner-section relative z-30 min-h-screen scroll-mt-24 px-4 py-20 sm:px-8 sm:py-28 lg:px-10">
+          <div className="mx-auto mb-10 flex max-w-[1240px] flex-wrap items-end justify-between gap-5">
+            <div>
+              <p className="section-kicker">Your travel intelligence desk</p>
+              <h2 className="mt-3 max-w-3xl text-[clamp(38px,5vw,68px)] font-medium leading-[.98] tracking-[-.055em] text-white">Build a trip that can <span className="font-serif font-normal italic text-[#72d7dc]">think on its feet.</span></h2>
+            </div>
+            <p className="max-w-sm text-sm leading-6 text-white/48">Give Wanderful the boundaries. It will coordinate the options, surface the tradeoffs, and keep the plan usable when reality intervenes.</p>
+          </div>
+          <div className="planner-grid mx-auto grid w-full max-w-[1240px] gap-5 lg:grid-cols-[0.76fr_1.24fr]">
+            <div className="planner-story-card order-2 rounded-[30px] p-6 sm:p-8 lg:order-1 lg:sticky lg:top-28 lg:self-start">
               <div className="mb-8 flex items-start justify-between gap-6">
                 <div>
-                  <p className="text-[11px] font-medium tracking-[0.18em] text-white/55">AI TRIP BRIEF</p>
-                  <h3 className="mt-3 text-3xl font-medium tracking-[-0.03em] text-white sm:text-5xl">
-                    Shape the trip. Let agents handle the details.
+                  <p className="section-kicker">01 / Brief the journey</p>
+                  <h3 className="mt-4 text-3xl font-medium leading-[1.02] tracking-[-0.045em] text-white sm:text-5xl">
+                    Your intent in. A resilient trip out.
                   </h3>
+                  <p className="mt-4 max-w-md text-sm leading-6 text-white/48">Wanderful turns six essentials into a living itinerary with evidence, alternatives, and room to change.</p>
                 </div>
-                <Sparkles className="mt-1 shrink-0 text-white/60" size={24} strokeWidth={1.4} />
+                <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-[#65d2d9]/18 bg-[#65d2d9]/10 text-[#72d7dc]"><Sparkles size={19} strokeWidth={1.5} /></span>
               </div>
 
               <div className="grid gap-3 text-sm text-white/72">
-                <InfoRow icon={<Plane size={16} strokeWidth={1.5} />} title="Live route intelligence" text="Flights, hotels, weather, and local search flow through the backend API." />
-                <InfoRow icon={<CalendarDays size={16} strokeWidth={1.5} />} title="Date-aware planning" text="Past dates are blocked before providers can fail." />
-                <InfoRow icon={<Lock size={16} strokeWidth={1.5} />} title="Fallback ready" text="Gemini can hand off to Groq when quota gets tight." />
+                <InfoRow icon={<Route size={16} strokeWidth={1.5} />} title="Live context, one workspace" text="Routes, stays, weather, and local signals stay connected to the itinerary." />
+                <InfoRow icon={<ListChecks size={16} strokeWidth={1.5} />} title="Constraints that mean something" text="Lock non-negotiables and let flexible moments absorb the change." />
+                <InfoRow icon={<Sparkles size={16} strokeWidth={1.5} />} title="A planner that learns" text="Every loved and skipped activity sharpens the next recommendation." />
               </div>
+              <div className="mt-7 border-t border-white/9 pt-5"><p className="text-[10px] uppercase tracking-[.16em] text-white/34">Designed for the whole trip</p><div className="mt-3 flex flex-wrap gap-2">{["Plan", "Book", "Adapt", "Remember"].map((item) => <span key={item} className="rounded-full border border-white/9 px-3 py-1.5 text-xs text-white/56">{item}</span>)}</div></div>
             </div>
 
-            <form onSubmit={submitPlan} className="planner-form-panel rounded-[32px] p-5 sm:p-7">
+            <form onSubmit={submitPlan} className="planner-form-panel order-1 rounded-[30px] p-5 sm:p-8 lg:order-2">
               <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <p className="text-[11px] font-medium tracking-[0.18em] text-white/55">START PLANNING</p>
-                  <h3 className="mt-2 text-2xl font-medium text-white">Your escape details</h3>
+                  <p className="section-kicker">02 / Set the boundaries</p>
+                  <h3 className="mt-2 text-2xl font-medium tracking-[-.03em] text-white sm:text-3xl">Where, when, and what matters?</h3>
                 </div>
-                <span className="rounded-full border border-[#3fb6c4]/15 bg-[#3fb6c4]/10 px-3 py-1.5 text-[11px] font-medium tracking-[0.12em] text-white/85">
-                  SAVED LOCALLY
+                <span className="rounded-full border border-[#65d2d9]/15 bg-[#65d2d9]/8 px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.12em] text-white/70">
+                  {authUser ? "Account workspace" : "Private draft"}
                 </span>
               </div>
 
@@ -1068,14 +918,14 @@ function App() {
                   value={form.interests}
                   onChange={(event) => updateField("interests", event.target.value)}
                   placeholder="quiet beaches, local food, hiking, scenic drives"
-                  className="w-full resize-none rounded-3xl border border-[#3fb6c4]/18 bg-[#0e1518]/65 px-4 py-3 text-[15px] text-white shadow-[inset_0_1px_0_rgba(63,182,196,0.08)] outline-none transition placeholder:text-white/42 focus:border-[#3fb6c4]/45 focus:bg-[#0e1518]/75"
+                  className="form-control min-h-28 w-full resize-none rounded-[20px] px-4 py-3 text-[15px] text-white outline-none transition placeholder:text-white/30"
                 />
               </label>
 
               <button
                 type="submit"
                 disabled={loading || !authUser || authUser.status !== "active"}
-                className="mt-5 flex w-full items-center justify-center gap-3 rounded-full bg-[#3fb6c4] px-8 py-4 text-[15px] font-medium text-[#06181a] transition-all duration-300 hover:scale-[1.01] hover:shadow-[0_0_32px_4px_rgba(63,182,196,0.18)] active:scale-[0.99] disabled:cursor-wait disabled:opacity-70"
+                className="primary-cta mt-6 flex w-full items-center justify-center gap-3 rounded-[18px] px-8 py-4 text-[15px] font-semibold text-[#06181a] transition-all duration-300 active:scale-[0.99] disabled:cursor-wait disabled:opacity-60"
               >
                 {loading ? <Loader2 className="animate-spin" size={18} /> : <ArrowDown size={18} />}
                 {loading ? loadingMessages[loadingMessageIndex] : "Generate my Wanderful itinerary"}
@@ -1091,11 +941,11 @@ function App() {
           </div>
 
           {(itinerary || hasAnyOptions(options)) && (
-            <section className="liquid-glass mx-auto mt-6 max-w-6xl rounded-[32px] p-5 sm:p-7">
+            <section className="results-workspace mx-auto mt-8 max-w-[1240px] rounded-[32px] p-4 sm:p-7">
               <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <p className="text-[11px] font-medium tracking-[0.18em] text-white/55">{itinerary ? "FINAL ITINERARY" : "LIVE TRIP OPTIONS"}</p>
-                  <h3 className="mt-2 text-2xl font-medium text-white">{itinerary ? "Your Wanderful plan" : "Provider data is ready"}</h3>
+                  <p className="section-kicker">{itinerary ? "03 / Your travel workspace" : "Live trip options"}</p>
+                  <h3 className="mt-2 text-2xl font-medium tracking-[-.03em] text-white sm:text-3xl">{itinerary ? "Your journey, ready to shape" : "Provider data is ready"}</h3>
                 </div>
                 {itinerary ? <div className="flex gap-2">
                   <button onClick={copyItinerary} className="action-button" type="button"><Copy size={15} /> Copy</button>
@@ -1132,6 +982,10 @@ function App() {
         onLoad={loadSavedTrip}
         onDelete={deleteSavedTrip}
         onNewTrip={resetPlan}
+        onOpenJournal={setJournalTrip}
+        onOpenGuidebook={setGuidebookTrip}
+        onOpenIntelligence={setIntelligenceTrip}
+        onToggleShare={toggleTripSharing}
       />
       <AuthModal
         open={authOpen}
@@ -1161,6 +1015,26 @@ function App() {
       />
       <AdminPanel open={adminOpen} onClose={() => setAdminOpen(false)} />
       <JobHistoryPanel open={jobHistoryOpen} onClose={() => setJobHistoryOpen(false)} />
+      <JournalPanel
+        open={Boolean(journalTrip)}
+        tripId={journalTrip?.id ?? null}
+        tripName={journalTrip?.name}
+        onClose={() => setJournalTrip(null)}
+      />
+      <GuidebookPanel
+        open={Boolean(guidebookTrip)}
+        tripId={guidebookTrip?.id ?? null}
+        tripName={guidebookTrip?.name}
+        onClose={() => setGuidebookTrip(null)}
+      />
+      <TripIntelligencePanel
+        trip={intelligenceTrip}
+        onClose={() => setIntelligenceTrip(null)}
+        onTripUpdated={(updatedTrip) => {
+          setIntelligenceTrip(updatedTrip);
+          setSavedTrips((current) => current.map((trip) => trip.id === updatedTrip.id ? updatedTrip : trip));
+        }}
+      />
       <PasswordResetModal
         token={passwordResetToken}
         onClose={() => {
@@ -1169,6 +1043,85 @@ function App() {
         }}
       />
     </div>
+  );
+}
+
+function FuturisticCursor() {
+  const pointerRef = useRef<HTMLDivElement | null>(null);
+  const auraRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const finePointer = window.matchMedia("(pointer: fine)");
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    if (!finePointer.matches || reducedMotion.matches) return;
+
+    const root = document.documentElement;
+    const pointer = pointerRef.current;
+    const aura = auraRef.current;
+    if (!pointer || !aura) return;
+
+    root.classList.add("custom-cursor-active");
+    let lastInteractive = false;
+    let lastEditing = false;
+
+    const handleMove = (event: PointerEvent) => {
+      const transform = `translate3d(${event.clientX}px, ${event.clientY}px, 0)`;
+      pointer.style.transform = transform;
+      aura.style.transform = transform;
+      pointer.dataset.visible = "true";
+      aura.dataset.visible = "true";
+      const element = event.target instanceof Element ? event.target : null;
+      const interactive = Boolean(element?.closest("a, button, [role='button'], [role='tab']"));
+      const editing = Boolean(element?.closest("input, textarea, select, [contenteditable='true']"));
+      if (interactive !== lastInteractive) {
+        pointer.dataset.interactive = String(interactive);
+        aura.dataset.interactive = String(interactive);
+        lastInteractive = interactive;
+      }
+      if (editing !== lastEditing) {
+        pointer.dataset.editing = String(editing);
+        aura.dataset.editing = String(editing);
+        lastEditing = editing;
+      }
+    };
+    const handleDown = () => {
+      pointer.dataset.pressed = "true";
+      aura.dataset.pressed = "true";
+    };
+    const handleUp = () => {
+      pointer.dataset.pressed = "false";
+      aura.dataset.pressed = "false";
+    };
+    const handleLeave = (event: MouseEvent) => {
+      if (event.relatedTarget) return;
+      pointer.dataset.visible = "false";
+      aura.dataset.visible = "false";
+    };
+
+    document.addEventListener("pointermove", handleMove, { passive: true });
+    document.addEventListener("pointerdown", handleDown, { passive: true });
+    document.addEventListener("pointerup", handleUp, { passive: true });
+    window.addEventListener("mouseout", handleLeave);
+    return () => {
+      root.classList.remove("custom-cursor-active");
+      document.removeEventListener("pointermove", handleMove);
+      document.removeEventListener("pointerdown", handleDown);
+      document.removeEventListener("pointerup", handleUp);
+      window.removeEventListener("mouseout", handleLeave);
+    };
+  }, []);
+
+  return (
+    <>
+      <div ref={auraRef} aria-hidden="true" className="cursor-golden-aura" />
+      <div ref={pointerRef} aria-hidden="true" className="cursor-future-arrow">
+        <svg viewBox="0 0 24 30" fill="none">
+          <path className="cursor-arrow-edge" d="M2.2 1.7 21.4 18l-8.2 1.2 5 7.6-4.1 2.2-4.8-7.8-6.2 5.6-.9-25.1Z" />
+          <path className="cursor-arrow-core" d="m4.3 5 13.4 11.4-7.7 1.1 4.9 7.7-1 .5-4.7-7.8-5 4.5L4.3 5Z" />
+        </svg>
+        <span className="cursor-tip-flare" />
+      </div>
+    </>
   );
 }
 
@@ -1206,51 +1159,6 @@ function useEscapeToClose(active: boolean, onClose: () => void) {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [active, onClose]);
-}
-
-function InfoSections() {
-  return (
-    <section className="relative z-30 px-4 pb-24 sm:px-8 lg:px-10">
-      <div className="mx-auto grid max-w-6xl gap-5">
-        <section id="benefits" className="scroll-mt-28 rounded-[32px] border border-[#3fb6c4]/12 bg-[#0e1518]/64 p-6 shadow-[0_24px_90px_rgba(0,0,0,0.28)] sm:p-8">
-          <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-white/45">Benefits</p>
-          <h3 className="mt-3 text-3xl font-medium tracking-[-0.04em] text-white sm:text-5xl">Planning that survives real-world changes.</h3>
-          <div className="mt-6 grid gap-3 md:grid-cols-3">
-            <InfoCard title="Live provider data" text="Flights, hotels, weather, and local context are collected before the itinerary is written." />
-            <InfoCard title="Interactive recovery" text="Change flight dates, airports, and retry searches without regenerating the whole trip." />
-            <InfoCard title="Readable planning UI" text="Horizontal day cards, maps, hotel switching, saved trips, and raw Markdown export." />
-          </div>
-        </section>
-
-        <div className="grid gap-5 lg:grid-cols-2">
-          <section id="journal" className="scroll-mt-28 rounded-[32px] border border-[#3fb6c4]/12 bg-[#0e1518]/58 p-6 sm:p-8">
-            <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-white/45">Journal</p>
-            <h3 className="mt-3 text-3xl font-medium tracking-[-0.04em] text-white">What the planner remembers locally.</h3>
-            <p className="mt-4 text-sm leading-relaxed text-white/62">
-              Save trip workspaces in this browser, reopen previous itineraries, and keep exploring alternatives without losing your current plan.
-            </p>
-          </section>
-
-          <section id="guidebook" className="scroll-mt-28 rounded-[32px] border border-[#3fb6c4]/12 bg-[#0e1518]/58 p-6 sm:p-8">
-            <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-white/45">Guidebook</p>
-            <h3 className="mt-3 text-3xl font-medium tracking-[-0.04em] text-white">Built for the next AI systems layer.</h3>
-            <p className="mt-4 text-sm leading-relaxed text-white/62">
-              The architecture is ready for RAG guides, user preference memory, ranking models, saved cloud trips, and evaluation pipelines.
-            </p>
-          </section>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function InfoCard({ title, text }: { title: string; text: string }) {
-  return (
-    <div className="rounded-[24px] border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.055] p-4">
-      <p className="font-medium text-white">{title}</p>
-      <p className="mt-2 text-sm leading-relaxed text-white/58">{text}</p>
-    </div>
-  );
 }
 
 function wait(ms: number) {
@@ -1671,7 +1579,7 @@ function Field({
 }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-[11px] font-medium tracking-[0.15em] text-white/55">{label.toUpperCase()}</span>
+      <span className="mb-2 block text-[10px] font-medium uppercase tracking-[0.16em] text-white/48">{label}</span>
       <input
         required
         type={type}
@@ -1681,7 +1589,7 @@ function Field({
         maxLength={maxLength}
         placeholder={placeholder}
         onChange={(event) => onChange(event.target.value)}
-        className="h-12 w-full rounded-full border border-[#3fb6c4]/18 bg-[#0e1518]/65 px-4 text-[15px] text-white shadow-[inset_0_1px_0_rgba(63,182,196,0.08)] outline-none transition placeholder:text-white/42 focus:border-[#3fb6c4]/45 focus:bg-[#0e1518]/75"
+        className="form-control h-12 w-full rounded-[17px] px-4 text-[15px] text-white outline-none transition placeholder:text-white/30"
       />
     </label>
   );
@@ -1689,11 +1597,11 @@ function Field({
 
 function InfoRow({ icon, title, text }: { icon: ReactNode; title: string; text: string }) {
   return (
-    <div className="flex gap-3 rounded-3xl border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.035] p-4">
-      <div className="mt-0.5 text-white/65">{icon}</div>
+    <div className="feature-row group flex gap-3.5 rounded-[20px] p-4">
+      <div className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-white/[.055] text-[#72d7dc] transition group-hover:bg-[#65d2d9]/12">{icon}</div>
       <div>
-        <p className="font-medium text-white">{title}</p>
-        <p className="mt-1 leading-relaxed text-white/55">{text}</p>
+        <p className="text-sm font-medium text-white/92">{title}</p>
+        <p className="mt-1 text-sm leading-relaxed text-white/46">{text}</p>
       </div>
     </div>
   );
@@ -1731,6 +1639,12 @@ function ItineraryResult({
     { icon: <Wallet size={16} />, label: "Budget", value: `${form.currency_code || "USD"} ${form.budget || "0"}` },
     { icon: <Users size={16} />, label: "Travelers", value: `${form.adults || "1"} adult${form.adults === "1" ? "" : "s"}` },
   ];
+  const resultTabs: Array<{ id: ResultTab; label: string; detail: string; icon: ReactNode }> = [
+    { id: "itinerary", label: "Journey", detail: "Day-by-day plan", icon: <Route size={17} /> },
+    { id: "hotels", label: "Stays", detail: "Map and compare", icon: <Building2 size={17} /> },
+    { id: "flights", label: "Flights", detail: "Routes and fares", icon: <Plane size={17} /> },
+    { id: "raw", label: "Source", detail: "Full plan notes", icon: <Braces size={17} /> },
+  ];
 
   return (
     <div className="overflow-hidden rounded-[28px] border border-[#3fb6c4]/14 bg-[#0e1518]/70 shadow-[0_24px_90px_rgba(0,0,0,0.32)]">
@@ -1747,7 +1661,7 @@ function ItineraryResult({
           ))}
         </div>
 
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="mt-4">
           <div className="flex flex-wrap items-center gap-2 text-[12px] text-white/60">
             <span className="inline-flex items-center gap-2 rounded-full border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.05] px-3 py-1.5">
               <Clock size={13} /> {tripLength}
@@ -1757,22 +1671,30 @@ function ItineraryResult({
             </span>
           </div>
 
-          <div className="flex flex-wrap rounded-[22px] border border-[#3fb6c4]/12 bg-[#0e1518]/65 p-1">
-            {[
-              ["itinerary", "Itinerary"],
-              ["hotels", "Hotels Map"],
-              ["flights", "Flights"],
-              ["raw", "Raw Markdown"],
-            ].map(([tab, label]) => (
+          <div role="tablist" aria-label="Trip workspace" className="result-tab-list mt-4 grid grid-cols-2 gap-1.5 rounded-[22px] p-1.5 sm:grid-cols-4">
+            {resultTabs.map((tab) => (
               <button
-                key={tab}
+                key={tab.id}
                 type="button"
-                onClick={() => onTabChange(tab as ResultTab)}
-                className={`rounded-full px-4 py-2 text-[12px] font-medium transition ${
-                  activeTab === tab ? "bg-[#3fb6c4] text-[#06181a]" : "text-white/68 hover:text-white"
-                }`}
+                role="tab"
+                id={`trip-tab-${tab.id}`}
+                aria-controls={`trip-panel-${tab.id}`}
+                aria-selected={activeTab === tab.id}
+                tabIndex={activeTab === tab.id ? 0 : -1}
+                onClick={() => onTabChange(tab.id)}
+                onKeyDown={(event) => {
+                  const currentIndex = resultTabs.findIndex((item) => item.id === tab.id);
+                  const nextIndex = event.key === "ArrowRight" ? (currentIndex + 1) % resultTabs.length : event.key === "ArrowLeft" ? (currentIndex - 1 + resultTabs.length) % resultTabs.length : event.key === "Home" ? 0 : event.key === "End" ? resultTabs.length - 1 : -1;
+                  if (nextIndex < 0) return;
+                  event.preventDefault();
+                  const nextTab = resultTabs[nextIndex].id;
+                  onTabChange(nextTab);
+                  window.requestAnimationFrame(() => document.getElementById(`trip-tab-${nextTab}`)?.focus());
+                }}
+                className={`result-tab flex min-w-0 items-center gap-3 rounded-[17px] px-3 py-3 text-left transition ${activeTab === tab.id ? "result-tab-active" : "text-white/52 hover:text-white/82"}`}
               >
-                {label}
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-white/[.055]">{tab.icon}</span>
+                <span className="min-w-0"><span className="block text-xs font-semibold text-inherit">{tab.label}</span><span className={`mt-0.5 hidden truncate text-[10px] sm:block ${activeTab === tab.id ? "text-[#06181a]/60" : "text-white/30"}`}>{tab.detail}</span></span>
               </button>
             ))}
           </div>
@@ -1780,7 +1702,7 @@ function ItineraryResult({
       </div>
 
       {activeTab === "itinerary" ? (
-        <div className="space-y-5 p-4 sm:p-5">
+        <div id="trip-panel-itinerary" role="tabpanel" aria-labelledby="trip-tab-itinerary" className="space-y-5 p-4 sm:p-5">
           <WeatherStrip weather={options.weather || null} />
           {itinerary ? (
             <DayTimeline
@@ -1839,29 +1761,29 @@ function ItineraryResult({
       ) : null}
 
       {activeTab === "hotels" ? (
-        <HotelMapPanel
-          form={form}
-          hotels={options.hotels}
-          mapCenter={options.map_center}
-          lockedHotelId={structuredItinerary?.locked_hotel_id || structuredItinerary?.recommended_hotel_id || ""}
-          onLockHotel={(hotelId) => onStructuredItineraryChange({ ...(structuredItinerary || {}), locked_hotel_id: hotelId })}
-          onHotelsUpdated={(hotels, mapCenter) => onOptionsChange({ ...options, hotels, map_center: mapCenter })}
-        />
+        <div id="trip-panel-hotels" role="tabpanel" aria-labelledby="trip-tab-hotels"><HotelMapPanel
+            form={form}
+            hotels={options.hotels}
+            mapCenter={options.map_center}
+            lockedHotelId={structuredItinerary?.locked_hotel_id || structuredItinerary?.recommended_hotel_id || ""}
+            onLockHotel={(hotelId) => onStructuredItineraryChange({ ...(structuredItinerary || {}), locked_hotel_id: hotelId })}
+            onHotelsUpdated={(hotels, mapCenter) => onOptionsChange({ ...options, hotels, map_center: mapCenter })}
+          /></div>
       ) : null}
 
       {activeTab === "flights" ? (
-        <FlightOptionsPanel
-          form={form}
-          flights={options.flights}
-          recovery={options.flight_recovery}
-          priceInsights={options.price_insights || null}
-          lockedFlightId={structuredItinerary?.locked_flight_id || structuredItinerary?.recommended_flight_id || ""}
-          onLockFlight={(flightId) => onStructuredItineraryChange({ ...(structuredItinerary || {}), locked_flight_id: flightId })}
-        />
+        <div id="trip-panel-flights" role="tabpanel" aria-labelledby="trip-tab-flights"><FlightOptionsPanel
+            form={form}
+            flights={options.flights}
+            recovery={options.flight_recovery}
+            priceInsights={options.price_insights || null}
+            lockedFlightId={structuredItinerary?.locked_flight_id || structuredItinerary?.recommended_flight_id || ""}
+            onLockFlight={(flightId) => onStructuredItineraryChange({ ...(structuredItinerary || {}), locked_flight_id: flightId })}
+          /></div>
       ) : null}
 
       {activeTab === "raw" ? (
-        <pre className="max-h-[720px] overflow-auto whitespace-pre-wrap p-5 font-barlow text-[15px] leading-7 text-white/82 sm:p-7">
+        <pre id="trip-panel-raw" role="tabpanel" aria-labelledby="trip-tab-raw" className="max-h-[720px] overflow-auto whitespace-pre-wrap p-5 font-barlow text-[15px] leading-7 text-white/82 sm:p-7">
           {itinerary}
         </pre>
       ) : null}
@@ -1885,6 +1807,7 @@ function HotelMapPanel({
   onHotelsUpdated: (hotels: HotelOption[], mapCenter: Coordinates | null) => void;
 }) {
   const [selectedHotelId, setSelectedHotelId] = useState(hotels[0]?.id || "");
+  const mapShellRef = useRef<HTMLDivElement | null>(null);
   const [nightlyBudget, setNightlyBudget] = useState(() => inferInitialNightlyBudget(form));
   const [hotelStatus, setHotelStatus] = useState("");
   const [hotelStatusIsError, setHotelStatusIsError] = useState(false);
@@ -1896,6 +1819,11 @@ function HotelMapPanel({
   useEffect(() => {
     setSelectedHotelId(hotels[0]?.id || "");
   }, [hotels]);
+
+  const selectHotel = (hotelId: string) => {
+    setSelectedHotelId(hotelId);
+    mapShellRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  };
 
   const refreshHotels = async () => {
     setHotelLoading(true);
@@ -1996,10 +1924,14 @@ function HotelMapPanel({
         {hotels.map((hotel, hotelIndex) => (
           <article
             key={hotel.id}
-            onClick={() => setSelectedHotelId(hotel.id)}
+            onClick={(event) => {
+              selectHotel(hotel.id);
+              event.currentTarget.scrollIntoView({ behavior: "smooth", block: "center" });
+            }}
             onKeyDown={(event) => {
               if (event.key === "Enter" || event.key === " ") {
-                setSelectedHotelId(hotel.id);
+                selectHotel(hotel.id);
+                event.currentTarget.scrollIntoView({ behavior: "smooth", block: "center" });
               }
             }}
             role="button"
@@ -2082,7 +2014,7 @@ function HotelMapPanel({
         ))}
       </div>
 
-      <div className="hotel-map-shell relative overflow-hidden rounded-[34px] border border-[#3fb6c4]/14 bg-[#0e1518]/60 shadow-[0_32px_110px_rgba(0,0,0,0.44)]">
+      <div ref={mapShellRef} className="hotel-map-shell relative overflow-hidden rounded-[34px] border border-[#3fb6c4]/14 bg-[#0e1518]/60 shadow-[0_32px_110px_rgba(0,0,0,0.44)]">
         <div className="pointer-events-none absolute inset-x-0 top-0 z-[500] h-28 bg-gradient-to-b from-black/70 to-transparent" />
         <div className="pointer-events-none absolute left-4 right-4 top-4 z-[501] flex flex-wrap items-start justify-between gap-3">
           <div className="rounded-2xl border border-[#3fb6c4]/12 bg-[#0e1518]/72 px-4 py-3 backdrop-blur-md">
@@ -2112,7 +2044,7 @@ function HotelMapPanel({
                   key={hotel.id}
                   position={[coordinates.lat, coordinates.lng]}
                   icon={selected ? selectedHotelMarker : hotelMarker}
-                  eventHandlers={{ click: () => setSelectedHotelId(hotel.id) }}
+                  eventHandlers={{ click: () => selectHotel(hotel.id) }}
                 >
                   <Popup>
                     <strong>{hotel.name}</strong>
@@ -2339,10 +2271,14 @@ function FlightOptionsPanel({
           currentFlights.map((flight, flightIndex) => (
             <article
               key={flight.id}
-              onClick={() => setSelectedFlight(flight)}
+              onClick={(event) => {
+                setSelectedFlight(flight);
+                event.currentTarget.scrollIntoView({ behavior: "smooth", block: "center" });
+              }}
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {
                   setSelectedFlight(flight);
+                  event.currentTarget.scrollIntoView({ behavior: "smooth", block: "center" });
                 }
               }}
               role="button"
@@ -2853,6 +2789,10 @@ function SavedTripsDrawer({
   onLoad,
   onDelete,
   onNewTrip,
+  onOpenJournal,
+  onOpenGuidebook,
+  onOpenIntelligence,
+  onToggleShare,
 }: {
   open: boolean;
   trips: SavedTrip[];
@@ -2861,12 +2801,29 @@ function SavedTripsDrawer({
   onLoad: (trip: SavedTrip) => void;
   onDelete: (tripId: string) => void;
   onNewTrip: () => void;
+  onOpenJournal: (trip: SavedTrip) => void;
+  onOpenGuidebook: (trip: SavedTrip) => void;
+  onOpenIntelligence: (trip: SavedTrip) => void;
+  onToggleShare: (tripId: string) => void;
 }) {
   useEscapeToClose(open, onClose);
+  const [copiedTripId, setCopiedTripId] = useState<string | null>(null);
 
   if (!open) {
     return null;
   }
+
+  const copyShareLink = async (trip: SavedTrip) => {
+    if (!trip.shareToken) return;
+    const url = `${window.location.origin}/share/${trip.shareToken}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedTripId(trip.id);
+      window.setTimeout(() => setCopiedTripId((current) => (current === trip.id ? null : current)), 2000);
+    } catch {
+      window.prompt("Copy this link:", url);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-[80] bg-[#0e1518]/58 backdrop-blur-sm" onClick={onClose}>
@@ -2900,8 +2857,12 @@ function SavedTripsDrawer({
 
         {trips.length ? (
           <div className="space-y-3">
-            {trips.map((trip) => (
-              <article key={trip.id} className="rounded-[24px] border border-[#3fb6c4]/12 bg-[#3fb6c4]/[0.055] p-4">
+            {trips.map((trip, tripIndex) => (
+              <article
+                key={trip.id}
+                style={{ animationDelay: `${Math.min(tripIndex, 8) * 45}ms` }}
+                className="card-hover card-enter rounded-[24px] border border-[#3fb6c4]/12 bg-[#3fb6c4]/[0.055] p-4 hover:border-[#3fb6c4]/28 hover:bg-[#3fb6c4]/[0.09]"
+              >
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <h4 className="text-lg font-medium leading-tight text-white">{trip.name}</h4>
@@ -2918,6 +2879,67 @@ function SavedTripsDrawer({
                     Delete
                   </button>
                 </div>
+                {accountMode ? (
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => onOpenIntelligence(trip)}
+                      className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-full border border-[#3fb6c4]/20 bg-[#3fb6c4]/10 px-3 py-2 text-xs text-white/78 hover:bg-[#3fb6c4]/16"
+                    >
+                      <Sparkles size={13} /> Trip Health
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onOpenJournal(trip)}
+                      className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-full border border-[#3fb6c4]/12 bg-[#0e1518]/35 px-3 py-2 text-xs text-white/68 hover:bg-[#3fb6c4]/10"
+                    >
+                      <BookOpen size={13} /> Journal
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onOpenGuidebook(trip)}
+                      className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-full border border-[#3fb6c4]/12 bg-[#0e1518]/35 px-3 py-2 text-xs text-white/68 hover:bg-[#3fb6c4]/10"
+                    >
+                      <Compass size={13} /> Guidebook
+                    </button>
+                  </div>
+                ) : null}
+                {accountMode ? (
+                  trip.shareToken ? (
+                    <div className="mt-2 flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => copyShareLink(trip)}
+                        className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-full border border-[#3fb6c4]/20 bg-[#3fb6c4]/10 px-3 py-2 text-xs text-white/78 hover:bg-[#3fb6c4]/16"
+                      >
+                        {copiedTripId === trip.id ? (
+                          <>
+                            <Check size={13} /> Copied
+                          </>
+                        ) : (
+                          <>
+                            <Copy size={13} /> Copy link
+                          </>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onToggleShare(trip.id)}
+                        className="rounded-full border border-[#3fb6c4]/12 bg-[#0e1518]/35 px-3 py-2 text-xs text-white/68 hover:bg-[#3fb6c4]/10"
+                      >
+                        Stop sharing
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => onToggleShare(trip.id)}
+                      className="mt-2 w-full inline-flex items-center justify-center gap-1.5 rounded-full border border-[#3fb6c4]/12 bg-[#0e1518]/35 px-3 py-2 text-xs text-white/68 hover:bg-[#3fb6c4]/10"
+                    >
+                      <Share2 size={13} /> Share publicly
+                    </button>
+                  )
+                ) : null}
               </article>
             ))}
           </div>
@@ -3121,7 +3143,10 @@ function DayTimeline({
           <button
             key={`${day.day}-${index}`}
             type="button"
-            onClick={() => setSelectedDay(day)}
+            onClick={(event) => {
+              setSelectedDay(day);
+              event.currentTarget.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+            }}
             style={{ animationDelay: `${Math.min(index, 8) * 45}ms` }}
             className="day-card card-hover card-enter group min-w-[280px] max-w-[320px] flex-1 rounded-[28px] border border-[#3fb6c4]/12 bg-[#0e1518]/48 p-4 text-left hover:border-[#3fb6c4]/30 hover:bg-[#0e1518]/62"
           >

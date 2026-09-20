@@ -17,7 +17,9 @@ _rq_redis: Redis | None = None
 
 
 def init_runtime_store() -> None:
-    if not settings.production:
+    # Never mutate a PostgreSQL schema during application import. Alembic is the
+    # single schema owner outside local SQLite development and tests.
+    if settings.database_url.startswith("sqlite"):
         Base.metadata.create_all(engine)
         ensure_local_column("plan_jobs", "user_id", "integer not null default 0")
         ensure_local_column("plan_jobs", "idempotency_key", "varchar(128) not null default ''")
@@ -183,9 +185,79 @@ def update_plan_job_locks(
             structured["locked_hotel_id"] = locked_hotel_id
         if locked_flight_id is not None:
             structured["locked_flight_id"] = locked_flight_id
+        structured = _apply_locked_pricing(structured, job.options_json or {})
         job.structured_json = structured
         db.flush()
         return _job_dict(job)
+
+
+def _find_option(options_list: Any, option_id: Any) -> dict[str, Any] | None:
+    if not option_id or not isinstance(options_list, list):
+        return None
+    return next(
+        (item for item in options_list if isinstance(item, dict) and str(item.get("id")) == str(option_id)),
+        None,
+    )
+
+
+def _sync_locked_category(
+    categories: list[dict[str, Any]],
+    name: str,
+    *,
+    locked: bool,
+    amount: float | None,
+    note: str,
+) -> list[dict[str, Any]]:
+    found = False
+    result: list[dict[str, Any]] = []
+    for category in categories:
+        if str(category.get("category", "")).strip().lower() != name.lower():
+            result.append(category)
+            continue
+        found = True
+        if locked:
+            base_amount = category.get("base_amount")
+            if base_amount is None:
+                base_amount = category.get("amount", 0)
+            result.append({**category, "base_amount": base_amount, "amount": round(float(amount), 2), "note": note})
+        elif category.get("base_amount") is not None:
+            restored = dict(category)
+            restored["amount"] = restored.pop("base_amount")
+            restored["note"] = ""
+            result.append(restored)
+        else:
+            result.append(category)
+    if not found and locked:
+        result.append({"category": name, "amount": round(float(amount), 2), "note": note, "base_amount": 0})
+    return result
+
+
+def _apply_locked_pricing(structured: dict[str, Any], options: dict[str, Any]) -> dict[str, Any]:
+    categories = [dict(category) for category in (structured.get("budget_categories") or [])]
+
+    hotel = _find_option(options.get("hotels"), structured.get("locked_hotel_id"))
+    hotel_cost = hotel.get("estimated_total") if hotel else None
+    categories = _sync_locked_category(
+        categories,
+        "Hotels",
+        locked=bool(structured.get("locked_hotel_id")) and isinstance(hotel_cost, (int, float)),
+        amount=hotel_cost,
+        note=f"Locked: {hotel.get('name', 'selected hotel')}" if hotel else "",
+    )
+
+    flight = _find_option(options.get("flights"), structured.get("locked_flight_id"))
+    flight_cost = flight.get("total_price") if flight else None
+    categories = _sync_locked_category(
+        categories,
+        "Flights",
+        locked=bool(structured.get("locked_flight_id")) and isinstance(flight_cost, (int, float)),
+        amount=flight_cost,
+        note="Locked flight selection" if flight else "",
+    )
+
+    structured["budget_categories"] = categories
+    structured["estimated_total"] = round(sum(float(category.get("amount") or 0) for category in categories), 2)
+    return structured
 
 
 def get_plan_job(job_id: str, user_id: int | None = None) -> dict[str, Any] | None:

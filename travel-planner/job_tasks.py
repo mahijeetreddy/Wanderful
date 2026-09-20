@@ -7,9 +7,15 @@ from typing import Any
 from auth_store import get_user
 from data_collector import collect_trip_data
 from email_service import send_plan_ready
+from guidebook_store import update_guidebook
 from itinerary_schema import StructuredItinerary
 from main import TravelInputs
-from planner_engine import generate_structured_plan, regenerate_single_day, render_itinerary_markdown
+from planner_engine import (
+    generate_guidebook_content,
+    generate_structured_plan,
+    regenerate_single_day,
+    render_itinerary_markdown,
+)
 from runtime_store import cancellation_requested, get_plan_job, update_plan_job
 
 
@@ -40,6 +46,7 @@ def execute_plan_job(job_id: str, travel_input_values: dict[str, Any]) -> None:
             return
 
         structured, metrics = generate_structured_plan(travel_inputs, trip_data)
+        metrics = {"collection": trip_data.get("collection_metrics", {}), "planning": metrics}
         itinerary = render_itinerary_markdown(structured)
         update_plan_job(
             job_id,
@@ -90,6 +97,21 @@ def regenerate_plan_job_day(job_id: str, day_number: int, travel_input_values: d
             progress="Day regeneration failed; previous itinerary kept.",
             error=_safe_job_error(exc),
         )
+
+
+def generate_guidebook_job(
+    guidebook_id: int,
+    destination: str,
+    start_date: str,
+    end_date: str,
+    interests: str,
+) -> None:
+    try:
+        update_guidebook(guidebook_id, status="generating")
+        content = generate_guidebook_content(destination, start_date, end_date, interests)
+        update_guidebook(guidebook_id, status="complete", content=content.model_dump(mode="json"))
+    except Exception as exc:
+        update_guidebook(guidebook_id, status="failed", error=_safe_job_error(exc))
 
 
 def _safe_job_error(exc: Exception) -> str:

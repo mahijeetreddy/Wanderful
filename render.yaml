@@ -2,6 +2,7 @@ services:
   - type: web
     name: wanderful-api
     runtime: docker
+    rootDir: travel-planner
     dockerfilePath: ./Dockerfile
     dockerCommand: sh -c "alembic upgrade head && gunicorn --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 120 web_app:app"
     healthCheckPath: /health/ready
@@ -20,14 +21,21 @@ services:
         sync: false
       - key: AUTH_SECRET_KEY
         generateValue: true
+      - key: ADMIN_EMAILS
+        sync: false
   - type: worker
     name: wanderful-worker
     runtime: docker
+    rootDir: travel-planner
     dockerfilePath: ./Dockerfile
     dockerCommand: python worker.py
     envVars:
       - key: APP_ENV
         value: production
+      - key: SECURE_COOKIES
+        value: "true"
+      - key: CSRF_ENFORCED
+        value: "true"
       - key: DATABASE_URL
         sync: false
       - key: MIGRATION_DATABASE_URL
@@ -35,4 +43,6 @@ services:
       - key: REDIS_URL
         sync: false
       - key: AUTH_SECRET_KEY
+        sync: false
+      - key: ADMIN_EMAILS
         sync: false

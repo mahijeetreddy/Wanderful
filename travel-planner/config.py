@@ -45,12 +45,34 @@ class Settings:
     smtp_port: int
     smtp_username: str
     smtp_password: str
-    smtp_from_email: str
     admin_notification_email: str
 
     @property
     def production(self) -> bool:
         return self.environment == "production"
+
+
+def validate_production_settings(value: Settings) -> None:
+    """Fail fast when a production process would start insecurely or half-configured."""
+    if not value.production:
+        return
+    errors: list[str] = []
+    if not value.database_url.startswith("postgresql+"):
+        errors.append("DATABASE_URL must use PostgreSQL in production")
+    if not value.migration_database_url.startswith("postgresql+"):
+        errors.append("MIGRATION_DATABASE_URL must use PostgreSQL in production")
+    if not value.redis_url.startswith(("redis://", "rediss://")):
+        errors.append("REDIS_URL must be configured in production")
+    if value.auth_secret_key == "dev-only-change-me" or len(value.auth_secret_key) < 32:
+        errors.append("AUTH_SECRET_KEY must be a unique value of at least 32 characters")
+    if not value.secure_cookies:
+        errors.append("SECURE_COOKIES must be enabled in production")
+    if not value.csrf_enforced:
+        errors.append("CSRF_ENFORCED must be enabled in production")
+    if not value.admin_emails:
+        errors.append("ADMIN_EMAILS must include at least one production administrator")
+    if errors:
+        raise RuntimeError("Invalid production configuration: " + "; ".join(errors) + ".")
 
 
 def get_settings() -> Settings:
@@ -97,7 +119,6 @@ def get_settings() -> Settings:
         smtp_port=_int("SMTP_PORT", 587),
         smtp_username=os.getenv("SMTP_USERNAME", "").strip(),
         smtp_password=os.getenv("SMTP_PASSWORD", "").strip(),
-        smtp_from_email=os.getenv("SMTP_FROM_EMAIL", "").strip(),
         admin_notification_email=os.getenv("ADMIN_NOTIFICATION_EMAIL", "").strip(),
     )
 

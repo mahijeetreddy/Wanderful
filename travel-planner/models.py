@@ -41,6 +41,10 @@ class SavedTrip(Base):
     options_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     structured_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     result_tab: Mapped[str] = mapped_column(String(30), default="itinerary")
+    constraints_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    live_state_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    budget_state_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    disruption_history_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
     user: Mapped[User] = relationship()
@@ -58,6 +62,7 @@ class UserPreference(Base):
     preferred_currency: Mapped[str] = mapped_column(String(3), default="USD")
     date_of_birth: Mapped[str] = mapped_column(String(10), default="")
     age: Mapped[int | None] = mapped_column(Integer)
+    memory_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
@@ -95,6 +100,43 @@ class PasswordResetToken(Base):
     token_hash: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class JournalEntry(Base):
+    __tablename__ = "journal_entries"
+    __table_args__ = (Index("ix_journal_entries_trip", "saved_trip_id", "created_at"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    saved_trip_id: Mapped[int] = mapped_column(ForeignKey("saved_trips.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    body: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class Guidebook(Base):
+    __tablename__ = "guidebooks"
+    __table_args__ = (UniqueConstraint("saved_trip_id", name="uq_guidebook_trip"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    saved_trip_id: Mapped[int] = mapped_column(ForeignKey("saved_trips.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    content_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class TripShare(Base):
+    __tablename__ = "trip_shares"
+    __table_args__ = (UniqueConstraint("saved_trip_id", name="uq_trip_share_trip"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    saved_trip_id: Mapped[int] = mapped_column(ForeignKey("saved_trips.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

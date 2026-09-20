@@ -52,3 +52,51 @@ def test_begin_day_regeneration_flips_status_once():
 
     assert begin_day_regeneration(job["id"], 1) is True
     assert begin_day_regeneration(job["id"], 1) is False
+
+
+def test_update_plan_job_locks_applies_real_price_to_budget():
+    job = create_plan_job("lock-price-job", 1, "lock-price-key", {})
+    update_plan_job(
+        job["id"],
+        status="complete",
+        options={"hotels": [{"id": "hotel-1", "name": "Grand Hotel", "estimated_total": 500}], "flights": []},
+        structured_itinerary={
+            "days": [],
+            "budget_categories": [{"category": "Hotels", "amount": 300, "note": "Planning allocation"}],
+            "estimated_total": 300,
+        },
+    )
+
+    locked = update_plan_job_locks(job["id"], 1, locked_hotel_id="hotel-1")
+    hotels_category = next(c for c in locked["structured_itinerary"]["budget_categories"] if c["category"] == "Hotels")
+
+    assert hotels_category["amount"] == 500
+    assert hotels_category["base_amount"] == 300
+    assert hotels_category["note"] == "Locked: Grand Hotel"
+    assert locked["structured_itinerary"]["estimated_total"] == 500
+
+    unlocked = update_plan_job_locks(job["id"], 1, locked_hotel_id="")
+    hotels_category = next(c for c in unlocked["structured_itinerary"]["budget_categories"] if c["category"] == "Hotels")
+
+    assert hotels_category["amount"] == 300
+    assert unlocked["structured_itinerary"]["estimated_total"] == 300
+
+
+def test_update_plan_job_locks_with_unknown_option_id_is_noop():
+    job = create_plan_job("lock-unknown-job", 1, "lock-unknown-key", {})
+    update_plan_job(
+        job["id"],
+        status="complete",
+        options={"hotels": [], "flights": []},
+        structured_itinerary={
+            "days": [],
+            "budget_categories": [{"category": "Hotels", "amount": 300, "note": "Planning allocation"}],
+            "estimated_total": 300,
+        },
+    )
+
+    locked = update_plan_job_locks(job["id"], 1, locked_hotel_id="missing-hotel")
+    hotels_category = next(c for c in locked["structured_itinerary"]["budget_categories"] if c["category"] == "Hotels")
+
+    assert hotels_category["amount"] == 300
+    assert hotels_category["note"] == "Planning allocation"

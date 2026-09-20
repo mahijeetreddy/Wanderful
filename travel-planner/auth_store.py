@@ -11,12 +11,14 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 from config import settings
 from database import Base, engine, ensure_local_column, session_scope
-from models import PasswordResetToken, SavedTrip, User, UserPreference
+from models import JournalEntry, PasswordResetToken, SavedTrip, TripShare, User, UserPreference
+from trip_intelligence import VALID_CONSTRAINTS, update_memory
 
 
 def init_auth_store() -> None:
-    # Alembic owns production migrations. create_all keeps local SQLite setup frictionless.
-    if not settings.production:
+    # Alembic owns every PostgreSQL schema, including shared development databases.
+    # create_all is intentionally limited to disposable/local SQLite databases.
+    if settings.database_url.startswith("sqlite"):
         Base.metadata.create_all(engine)
         ensure_local_column("users", "status", "varchar(20) not null default 'active'")
         ensure_local_column("users", "role", "varchar(20) not null default 'user'")
@@ -24,6 +26,11 @@ def init_auth_store() -> None:
         ensure_local_column("users", "approved_by", "integer")
         ensure_local_column("users", "updated_at", "datetime")
         ensure_local_column("saved_trips", "structured_json", "text not null default '{}'")
+        ensure_local_column("saved_trips", "constraints_json", "text not null default '{}'")
+        ensure_local_column("saved_trips", "live_state_json", "text not null default '{}'")
+        ensure_local_column("saved_trips", "budget_state_json", "text not null default '{}'")
+        ensure_local_column("saved_trips", "disruption_history_json", "text not null default '[]'")
+        ensure_local_column("user_preferences", "memory_json", "text not null default '{}'")
     if settings.admin_emails:
         with session_scope() as db:
             users = db.scalars(select(User).where(User.email.in_(settings.admin_emails))).all()
@@ -117,7 +124,9 @@ def list_saved_trips(user_id: int) -> list[dict[str, Any]]:
             .where(SavedTrip.user_id == user_id)
             .order_by(SavedTrip.updated_at.desc())
         ).all()
-        return [_trip_dict(trip) for trip in trips]
+        shares = db.scalars(select(TripShare).where(TripShare.user_id == user_id)).all()
+        tokens_by_trip = {share.saved_trip_id: share.token for share in shares}
+        return [_trip_dict(trip, share_token=tokens_by_trip.get(trip.id)) for trip in trips]
 
 
 def create_saved_trip(user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
@@ -131,6 +140,10 @@ def create_saved_trip(user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
         options_json=_dict(payload.get("options")),
         structured_json=_dict(payload.get("structuredItinerary")),
         result_tab=str(payload.get("resultTab") or "itinerary")[:30],
+        constraints_json=_dict(payload.get("constraints")),
+        live_state_json=_dict(payload.get("liveState")),
+        budget_state_json=_dict(payload.get("budgetState")),
+        disruption_history_json=payload.get("disruptionHistory") if isinstance(payload.get("disruptionHistory"), list) else [],
     )
     with session_scope() as db:
         db.add(trip)
@@ -155,7 +168,169 @@ def get_saved_trip(user_id: int, trip_id: int) -> dict[str, Any] | None:
         trip = db.scalar(
             select(SavedTrip).where(SavedTrip.id == trip_id, SavedTrip.user_id == user_id)
         )
-        return _trip_dict(trip) if trip else None
+        if not trip:
+            return None
+        share = db.scalar(select(TripShare).where(TripShare.saved_trip_id == trip_id))
+        return _trip_dict(trip, share_token=share.token if share else None)
+
+
+def update_trip_constraints(user_id: int, trip_id: int, constraints: dict[str, Any]) -> dict[str, Any] | None:
+    normalized = {
+        str(key)[:120]: str(value)
+        for key, value in constraints.items()
+        if str(value) in VALID_CONSTRAINTS
+    }
+    with session_scope() as db:
+        trip = db.scalar(select(SavedTrip).where(SavedTrip.id == trip_id, SavedTrip.user_id == user_id))
+        if not trip:
+            return None
+        trip.constraints_json = normalized
+    return get_saved_trip(user_id, trip_id)
+
+
+def apply_trip_adjustment(user_id: int, trip_id: int, structured_itinerary: dict[str, Any], live_state: dict[str, Any]) -> dict[str, Any] | None:
+    with session_scope() as db:
+        trip = db.scalar(select(SavedTrip).where(SavedTrip.id == trip_id, SavedTrip.user_id == user_id))
+        if not trip:
+            return None
+        trip.structured_json = structured_itinerary
+        trip.live_state_json = live_state
+    return get_saved_trip(user_id, trip_id)
+
+
+def update_trip_budget(user_id: int, trip_id: int, budget_state: dict[str, Any]) -> dict[str, Any] | None:
+    with session_scope() as db:
+        trip = db.scalar(select(SavedTrip).where(SavedTrip.id == trip_id, SavedTrip.user_id == user_id))
+        if not trip:
+            return None
+        trip.budget_state_json = budget_state
+    return get_saved_trip(user_id, trip_id)
+
+
+def apply_disruption_scenario(
+    user_id: int,
+    trip_id: int,
+    structured_itinerary: dict[str, Any],
+    live_state: dict[str, Any],
+    history_entry: dict[str, Any],
+) -> dict[str, Any] | None:
+    with session_scope() as db:
+        trip = db.scalar(select(SavedTrip).where(SavedTrip.id == trip_id, SavedTrip.user_id == user_id))
+        if not trip:
+            return None
+        trip.structured_json = structured_itinerary
+        trip.live_state_json = live_state
+        history = list(trip.disruption_history_json or [])
+        history.insert(0, history_entry)
+        trip.disruption_history_json = history[:30]
+    return get_saved_trip(user_id, trip_id)
+
+
+def record_activity_feedback(user_id: int, feedback: dict[str, Any]) -> dict[str, Any]:
+    with session_scope() as db:
+        preference = db.get(UserPreference, user_id)
+        if not preference:
+            preference = UserPreference(user_id=user_id)
+            db.add(preference)
+        preference.memory_json = update_memory(preference.memory_json or {}, feedback)
+    return get_user_preferences(user_id)
+
+
+def enable_trip_sharing(user_id: int, trip_id: int) -> dict[str, Any] | None:
+    with session_scope() as db:
+        trip = db.scalar(select(SavedTrip).where(SavedTrip.id == trip_id, SavedTrip.user_id == user_id))
+        if not trip:
+            return None
+        share = db.scalar(select(TripShare).where(TripShare.saved_trip_id == trip_id))
+        if not share:
+            share = TripShare(saved_trip_id=trip_id, user_id=user_id, token=secrets.token_urlsafe(24))
+            db.add(share)
+            db.flush()
+        return {"shareToken": share.token}
+
+
+def disable_trip_sharing(user_id: int, trip_id: int) -> bool:
+    with session_scope() as db:
+        share = db.scalar(
+            select(TripShare).where(TripShare.saved_trip_id == trip_id, TripShare.user_id == user_id)
+        )
+        if not share:
+            return False
+        db.delete(share)
+        return True
+
+
+def get_public_trip_by_share_token(token: str) -> dict[str, Any] | None:
+    with session_scope() as db:
+        share = db.scalar(select(TripShare).where(TripShare.token == token))
+        if not share:
+            return None
+        trip = db.get(SavedTrip, share.saved_trip_id)
+        if not trip:
+            return None
+        return {
+            "name": trip.name,
+            "destination": trip.destination,
+            "dateRange": trip.date_range,
+            "form": trip.form_json or {},
+            "itinerary": trip.itinerary,
+            "structuredItinerary": trip.structured_json or {},
+        }
+
+
+def list_journal_entries(user_id: int, trip_id: int) -> list[dict[str, Any]] | None:
+    with session_scope() as db:
+        trip = db.scalar(select(SavedTrip).where(SavedTrip.id == trip_id, SavedTrip.user_id == user_id))
+        if not trip:
+            return None
+        entries = db.scalars(
+            select(JournalEntry)
+            .where(JournalEntry.saved_trip_id == trip_id)
+            .order_by(JournalEntry.created_at.desc())
+        ).all()
+        return [_journal_entry_dict(entry) for entry in entries]
+
+
+def create_journal_entry(user_id: int, trip_id: int, body: str) -> dict[str, Any] | None:
+    with session_scope() as db:
+        trip = db.scalar(select(SavedTrip).where(SavedTrip.id == trip_id, SavedTrip.user_id == user_id))
+        if not trip:
+            return None
+        entry = JournalEntry(saved_trip_id=trip_id, user_id=user_id, body=body)
+        db.add(entry)
+        db.flush()
+        return _journal_entry_dict(entry)
+
+
+def update_journal_entry(user_id: int, trip_id: int, entry_id: int, body: str) -> dict[str, Any] | None:
+    with session_scope() as db:
+        entry = db.scalar(
+            select(JournalEntry).where(
+                JournalEntry.id == entry_id,
+                JournalEntry.saved_trip_id == trip_id,
+                JournalEntry.user_id == user_id,
+            )
+        )
+        if not entry:
+            return None
+        entry.body = body
+        db.flush()
+        return _journal_entry_dict(entry)
+
+
+def delete_journal_entry(user_id: int, trip_id: int, entry_id: int) -> bool:
+    with session_scope() as db:
+        entry = db.scalar(
+            select(JournalEntry).where(
+                JournalEntry.id == entry_id,
+                JournalEntry.saved_trip_id == trip_id,
+                JournalEntry.user_id == user_id,
+            )
+        )
+        if not entry:
+            return False
+        db.delete(entry)
+        return True
 
 
 def get_user_preferences(user_id: int) -> dict[str, Any]:
@@ -172,6 +347,7 @@ def get_user_preferences(user_id: int) -> dict[str, Any]:
             "preferred_currency": preference.preferred_currency or "USD",
             "date_of_birth": preference.date_of_birth or "",
             "age": preference.age,
+            "memory": preference.memory_json or {},
             "updated_at": preference.updated_at.isoformat() if preference.updated_at else None,
         }
 
@@ -190,6 +366,8 @@ def upsert_user_preferences(user_id: int, preferences: dict[str, Any]) -> dict[s
         value.preferred_currency = str(preferences.get("preferred_currency") or "USD").upper()[:3]
         value.date_of_birth = _normalize_dob(preferences.get("date_of_birth"))
         value.age = _normalize_age(preferences.get("age"))
+        if isinstance(preferences.get("memory"), dict):
+            value.memory_json = preferences["memory"]
     return get_user_preferences(user_id)
 
 
@@ -243,7 +421,7 @@ def _user_dict(user: User) -> dict[str, Any]:
     }
 
 
-def _trip_dict(trip: SavedTrip) -> dict[str, Any]:
+def _trip_dict(trip: SavedTrip, *, share_token: str | None = None) -> dict[str, Any]:
     return {
         "id": str(trip.id),
         "name": trip.name,
@@ -255,6 +433,21 @@ def _trip_dict(trip: SavedTrip) -> dict[str, Any]:
         "options": trip.options_json or {},
         "structuredItinerary": trip.structured_json or {},
         "resultTab": trip.result_tab,
+        "shareToken": share_token,
+        "constraints": trip.constraints_json or {},
+        "liveState": trip.live_state_json or {},
+        "budgetState": trip.budget_state_json or {},
+        "disruptionHistory": trip.disruption_history_json or [],
+    }
+
+
+def _journal_entry_dict(entry: JournalEntry) -> dict[str, Any]:
+    return {
+        "id": entry.id,
+        "trip_id": entry.saved_trip_id,
+        "body": entry.body,
+        "created_at": entry.created_at.isoformat(),
+        "updated_at": entry.updated_at.isoformat(),
     }
 
 
@@ -268,6 +461,7 @@ def _empty_preferences() -> dict[str, Any]:
         "preferred_currency": "USD",
         "date_of_birth": "",
         "age": None,
+        "memory": {},
         "updated_at": None,
     }
 

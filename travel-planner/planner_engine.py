@@ -15,6 +15,7 @@ os.environ["LOCALAPPDATA"] = os.getenv("CREWAI_LOCALAPPDATA", str(Path.cwd() / "
 from crewai import Agent, Crew, Process, Task
 
 from agents import create_llm
+from guidebook_schema import GuidebookContent
 from itinerary_schema import ActivityBlock, BudgetCategory, StructuredDay, StructuredItinerary
 from main import TravelInputs
 from ranking import score_activity
@@ -25,6 +26,23 @@ def generate_structured_plan(
     trip_data: dict[str, Any],
 ) -> tuple[StructuredItinerary, dict[str, Any]]:
     started = time.perf_counter()
+    if os.getenv("FAST_PLAN_MODE", "true").strip().lower() in {"1", "true", "yes", "on"}:
+        fast_started = time.perf_counter()
+        try:
+            plan = _generate_complete_plan(travel_inputs, trip_data)
+            validated = validate_structured_itinerary(plan, travel_inputs)
+            total_ms = round((time.perf_counter() - started) * 1000)
+            return validated, {
+                "planning_mode": "single_pass",
+                "generation_ms": round((time.perf_counter() - fast_started) * 1000),
+                "total_ms": total_ms,
+                "day_count": len(validated.days),
+                "llm_calls": 1,
+                "fallback_used": False,
+            }
+        except Exception:
+            # Preserve the proven outline/day-expansion pipeline as a resilient fallback.
+            pass
     outline_started = time.perf_counter()
     outline, outline_fallback = _generate_outline(travel_inputs, trip_data)
     outline_ms = round((time.perf_counter() - outline_started) * 1000)
@@ -43,8 +61,39 @@ def generate_structured_plan(
         "day_failures": day_failures,
         "outline_fallback": outline_fallback,
         "parallel_workers": _day_workers(),
+        "planning_mode": "parallel_day_fallback",
+        "llm_calls": 1 + len(outline.days),
+        "fallback_used": True,
     }
     return validated, metrics
+
+
+def _generate_complete_plan(travel_inputs: TravelInputs, trip_data: dict[str, Any]) -> StructuredItinerary:
+    dates = _trip_dates(travel_inputs.start_date, travel_inputs.end_date)
+    prompt = f"""
+Return one complete JSON object only for a production-ready structured itinerary.
+
+Traveler inputs:
+{json.dumps(travel_inputs.as_crew_inputs(), indent=2)}
+Trip dates (include exactly one day for every date):
+{json.dumps(dates)}
+Verified provider context:
+{_provider_context(trip_data)}
+
+Required top-level keys:
+origin, destination, start_date, end_date, currency_code, adults, trip_summary,
+recommended_hotel_id, recommended_flight_id, budget_categories, days,
+packing_list, logistics, risks, estimated_total, validation_warnings.
+
+Each day requires day_number, date, title, summary, activities, estimated_cost,
+weather_note, transit_note, backup_plan. Each activity requires time, period,
+title, description, location, estimated_cost, indoor, source_url. Use 3-5
+realistically paced activities per day. Reuse provider URLs only when present;
+never invent live prices, availability, or links. Keep all costs numeric and
+within the stated trip budget. Output JSON only.
+""".strip()
+    result = _run_json_task("Fast itinerary architect", prompt)
+    return StructuredItinerary.model_validate(_extract_json_object(result))
 
 
 def regenerate_single_day(
@@ -53,13 +102,59 @@ def regenerate_single_day(
     plan: StructuredItinerary,
     day_number: int,
 ) -> StructuredItinerary:
+    options = trip_data.get("options") or {}
+    locked_hotel = _find_locked_option(options.get("hotels"), plan.locked_hotel_id)
+    locked_flight = _find_locked_option(options.get("flights"), plan.locked_flight_id)
     for index, day in enumerate(plan.days):
         if day.day_number == day_number:
-            plan.days[index] = _expand_day(travel_inputs, trip_data, day)
+            plan.days[index] = _expand_day(
+                travel_inputs, trip_data, day, locked_hotel=locked_hotel, locked_flight=locked_flight
+            )
             break
     else:
         raise ValueError(f"Day {day_number} not found in itinerary.")
     return validate_structured_itinerary(plan, travel_inputs)
+
+
+def _find_locked_option(options_list: Any, option_id: str) -> dict[str, Any] | None:
+    if not option_id or not isinstance(options_list, list):
+        return None
+    return next(
+        (item for item in options_list if isinstance(item, dict) and str(item.get("id")) == str(option_id)),
+        None,
+    )
+
+
+def generate_guidebook_content(
+    destination: str,
+    start_date: str,
+    end_date: str,
+    interests: str,
+) -> GuidebookContent:
+    prompt = f"""
+Return one JSON object only. Write a concise destination guidebook.
+
+Destination: {destination}
+Travel dates: {start_date} to {end_date}
+Traveler interests: {interests}
+
+Required keys: overview, currency_code, currency_notes, language_basics,
+local_customs, safety_tips, packing_notes, transport_tips.
+List fields should each contain 3-5 short, practical, non-generic bullet points
+specific to this destination. Do not invent live prices or links.
+""".strip()
+    try:
+        result = _run_json_task("Destination guidebook specialist", prompt)
+        payload = _extract_json_object(result)
+        return GuidebookContent.model_validate(payload)
+    except Exception:
+        return _fallback_guidebook(destination)
+
+
+def _fallback_guidebook(destination: str) -> GuidebookContent:
+    return GuidebookContent(
+        overview=f"Guidebook details for {destination} are being refined. Check back shortly.",
+    )
 
 
 def render_itinerary_markdown(plan: StructuredItinerary) -> str:
@@ -210,8 +305,19 @@ def _expand_day(
     travel_inputs: TravelInputs,
     trip_data: dict[str, Any],
     day: StructuredDay,
+    locked_hotel: dict[str, Any] | None = None,
+    locked_flight: dict[str, Any] | None = None,
 ) -> StructuredDay:
     provider_context = _provider_context(trip_data)
+    locked_note = ""
+    if locked_hotel:
+        locked_note += (
+            f"\nTraveler has locked in this hotel as their home base: "
+            f"{locked_hotel.get('name', '')} - {locked_hotel.get('description', '')}. "
+            "Plan activities with reasonable proximity/logistics to this hotel in mind."
+        )
+    if locked_flight:
+        locked_note += "\nTraveler has locked in a specific flight; do not suggest alternate flight timing."
     prompt = f"""
 Return one JSON object only. Expand this travel day without inventing live prices or links.
 
@@ -220,6 +326,7 @@ Interests: {travel_inputs.interests}
 Currency: {travel_inputs.currency_code}
 Day outline: {day.model_dump_json()}
 Provider context: {provider_context}
+{locked_note}
 
 Required keys:
 day_number, date, title, summary, activities, estimated_cost, weather_note,
