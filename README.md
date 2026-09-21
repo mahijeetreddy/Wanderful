@@ -1,46 +1,81 @@
 # Wanderful
 
-Wanderful turns a short description of your trip into a complete, day-by-day travel
-plan — built from real flight and hotel availability, live weather, and your stated
-budget and interests, not generic suggestions.
+**A travel workspace that plans with live context, protects what matters, and adapts when the trip changes.**
 
-## What you can do
+Wanderful turns a few trip details into a practical, day-by-day journey with live flight and hotel options, weather-aware activities, budget guidance, route maps, and tools for managing the trip after planning.
 
-- **Describe your trip and get a full itinerary.** Enter your origin, destination,
-  dates, budget, and interests, and Wanderful builds a day-by-day plan with paced
-  activities, estimated costs, and a running budget breakdown.
-- **Compare real flights and hotels.** Browse live flight and hotel options side by
-  side — prices, ratings, photos, stops, and emissions — and lock in the ones you want.
-- **Check the weather at a glance.** See the forecast for your travel dates right
-  alongside your itinerary.
-- **Fix one day without rebuilding the trip.** Not happy with a single day's plan?
-  Regenerate just that day and keep the rest of your itinerary untouched.
-- **Recover a weak flight search.** If a flight search comes back thin, Wanderful
-  suggests nearby airports and alternate dates and lets you retry in one click.
-- **Save trips to your account.** Revisit, edit, or re-plan any saved trip later.
-- **Edit as you go.** Swap activities, adjust plans, and see your estimated total
-  update automatically.
+![Wanderful travel workspace](travel-planner/artifacts/ui-audit/after-hero.png)
 
-## Status
+## Why Wanderful
 
-Wanderful is in a controlled beta. New accounts require admin approval before
-planning is enabled. Prices and availability shown are time-sensitive results from
-third-party providers, not guarantees — Wanderful does not sell travel, own bookings,
-or process payments. Confirm details, entry requirements, and booking terms directly
-with the relevant provider before you travel.
+Wanderful goes beyond generating a static itinerary. It gives travelers one place to plan, compare, coordinate, and respond to changes.
+
+- **AI itinerary planning:** Build a paced day-by-day plan around dates, budget, interests, and traveler needs.
+- **Live travel options:** Compare flights, stays, weather, local activities, prices, ratings, stops, and source freshness.
+- **Interactive route maps:** See each day's stops in order and understand how to move between them.
+- **Trip Health:** Detect timing, weather, budget, evidence, and resilience risks before they become problems.
+- **Budget Guardian:** Track planned, committed, and actual spending while protecting a configurable reserve.
+- **Disruption Autopilot:** Preview and apply safe itinerary repairs for rain, delays, fatigue, or budget pressure.
+- **Offline Companion:** Keep a versioned trip pack on the device for access when connectivity is unreliable.
+- **Group expenses:** Split shared costs, track balances, and settle debts with a simple group workspace.
+- **Travel document vault:** Keep tickets, bookings, insurance, and identity documents attached to the trip.
+- **PDF export:** Download a concise itinerary for sharing or offline reference.
+- **Personal travel memory:** Save trips, preferences, locks, and feedback to improve future plans.
+
+## Product tour
+
+### See the day before you go
+
+The interactive route map connects itinerary stops with a clear sequence, timing, and travel guidance.
+
+![Interactive day route through Lisbon](travel-planner/artifacts/ui-audit/interactive-route-map.png)
+
+### Split the trip, not the mood
+
+Add travelers and shared purchases, calculate balances automatically, and mark settlements as complete.
+
+![Wanderful group expense settlement](travel-planner/artifacts/ui-audit/group-expense-settlement.png)
+
+### Keep important documents with the trip
+
+The private document vault organizes travel files by category and can flag upcoming expiry dates.
+
+![Wanderful travel document vault](travel-planner/artifacts/ui-audit/travel-document-vault.png)
+
+### Stay ahead of changing conditions
+
+The trip command center combines budget monitoring, offline readiness, and disruption recovery.
+
+<table>
+  <tr>
+    <td width="50%"><img src="travel-planner/artifacts/ui-audit/command-center-budget.png" alt="Budget Guardian" /></td>
+    <td width="50%"><img src="travel-planner/artifacts/ui-audit/command-center-autopilot.png" alt="Disruption Autopilot" /></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Budget Guardian</strong></td>
+    <td align="center"><strong>Disruption Autopilot</strong></td>
+  </tr>
+</table>
+
+## Technology
+
+- React 18, TypeScript, Vite, Tailwind CSS, Leaflet, and GSAP
+- Flask API with secure cookie sessions, CSRF protection, rate limits, and structured logging
+- CrewAI and LiteLLM orchestration with validated structured itineraries
+- SQLAlchemy with SQLite locally and PostgreSQL/Neon in hosted environments
+- Redis and RQ for production background planning jobs
+- SerpAPI and OpenWeather provider integrations
 
 ## Project layout
 
-The application lives in [`travel-planner/`](travel-planner/) — see
-[`travel-planner/README.md`](travel-planner/README.md) for details specific to that
-project.
+The application lives in [`travel-planner/`](travel-planner/). See the [application README](travel-planner/README.md) for architecture, local setup, verification, database migrations, and production requirements.
 
-Repository-level deployment and CI definitions live in `render.yaml` and
-`.github/workflows/ci.yml`. Their commands run against the nested `travel-planner/`
-application directory.
+Repository-level deployment and CI definitions live in [`render.yaml`](render.yaml) and [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+
+## Status
+
+Wanderful is in controlled beta. New accounts require administrator approval before live planning is enabled. Provider prices and availability are time-sensitive and are not guarantees. Wanderful does not sell travel or process bookings; travelers should confirm booking terms, entry requirements, and final details with the relevant provider.
 
 ## Policies
 
-See [travel-planner/SECURITY.md](travel-planner/SECURITY.md),
-[travel-planner/PRIVACY.md](travel-planner/PRIVACY.md), and
-[travel-planner/TERMS.md](travel-planner/TERMS.md).
+See the [Security Policy](travel-planner/SECURITY.md), [Privacy Policy](travel-planner/PRIVACY.md), and [Terms of Use](travel-planner/TERMS.md).
