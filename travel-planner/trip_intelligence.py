@@ -268,6 +268,13 @@ def build_disruption_scenarios(trip: dict[str, Any], event: str, day_number: int
 
 def normalize_budget_state(value: Any) -> dict[str, Any]:
     state = _dict(value)
+    members = []
+    for member in state.get("members", []) if isinstance(state.get("members"), list) else []:
+        name = str(member).strip()[:100]
+        if name and name.lower() not in {item.lower() for item in members}:
+            members.append(name)
+    if not members:
+        members = ["Me"]
     raw_expenses = state.get("expenses") if isinstance(state.get("expenses"), list) else []
     expenses = []
     for index, expense in enumerate(raw_expenses[:300]):
@@ -276,19 +283,46 @@ def normalize_budget_state(value: Any) -> dict[str, Any]:
         amount = _number(expense.get("amount"))
         if amount <= 0 or amount > 10_000_000:
             continue
+        split_between = []
+        for member in expense.get("split_between", []) if isinstance(expense.get("split_between"), list) else []:
+            name = str(member).strip()[:100]
+            if name and name in members and name not in split_between:
+                split_between.append(name)
+        if not split_between:
+            split_between = members[:max(1, min(len(members), int(_number(expense.get("split_count")) or len(members))))]
+        paid_by = str(expense.get("paid_by") or members[0]).strip()[:100]
+        if paid_by not in members:
+            members.append(paid_by)
         expenses.append(
             {
                 "id": str(expense.get("id") or f"expense-{index + 1}")[:80],
                 "label": str(expense.get("label") or "Trip expense").strip()[:160],
                 "category": str(expense.get("category") or "Other").strip()[:80],
                 "amount": round(amount, 2),
-                "paid_by": str(expense.get("paid_by") or "Me").strip()[:100],
-                "split_count": max(1, min(50, int(_number(expense.get("split_count")) or 1))),
+                "paid_by": paid_by,
+                "split_count": len(split_between),
+                "split_between": split_between,
                 "occurred_at": str(expense.get("occurred_at") or date.today().isoformat())[:32],
             }
         )
+    settlements = []
+    for index, settlement in enumerate(state.get("settlements", []) if isinstance(state.get("settlements"), list) else []):
+        if not isinstance(settlement, dict):
+            continue
+        amount = _number(settlement.get("amount"))
+        from_member = str(settlement.get("from") or "").strip()[:100]
+        to_member = str(settlement.get("to") or "").strip()[:100]
+        if amount <= 0 or from_member not in members or to_member not in members or from_member == to_member:
+            continue
+        settlements.append({
+            "id": str(settlement.get("id") or f"settlement-{index + 1}")[:80],
+            "from": from_member,
+            "to": to_member,
+            "amount": round(amount, 2),
+            "settled_at": str(settlement.get("settled_at") or date.today().isoformat())[:32],
+        })
     reserve_percent = max(0, min(50, _number(state.get("reserve_percent") or 10)))
-    return {"expenses": expenses, "reserve_percent": reserve_percent, "updated_at": datetime.utcnow().isoformat() + "Z"}
+    return {"expenses": expenses, "members": members[:50], "settlements": settlements[:300], "reserve_percent": reserve_percent, "updated_at": datetime.utcnow().isoformat() + "Z"}
 
 
 def build_budget_guardian(trip: dict[str, Any]) -> dict[str, Any]:

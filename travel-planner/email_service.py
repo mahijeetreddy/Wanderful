@@ -68,6 +68,9 @@ def _build_email(intro_text: str, intro_html: str, button_label: str, button_url
 
 
 def _send(recipient: str, subject: str, body: str, html_body: str | None = None) -> None:
+    if settings.environment == "test":
+        logger.info("Email suppressed in test environment", extra={"recipient": recipient, "subject": subject})
+        return
     if not settings.smtp_host:
         logger.warning("SMTP not configured; email was not sent", extra={"recipient": recipient, "subject": subject})
         return

@@ -39,6 +39,7 @@ export type StructuredActivityData = {
   source_url?: string;
   rank_score?: number;
   rank_reasons?: string[];
+  coordinates?: Coordinates | null;
 };
 
 export type StructuredDayData = {
@@ -224,13 +225,34 @@ export type BudgetExpense = {
   amount: number;
   paid_by: string;
   split_count: number;
+  split_between?: string[];
   occurred_at: string;
 };
 
 export type BudgetState = {
   expenses?: BudgetExpense[];
+  members?: string[];
+  settlements?: GroupSettlement[];
   reserve_percent?: number;
   updated_at?: string;
+};
+
+export type GroupSettlement = {
+  id: string;
+  from: string;
+  to: string;
+  amount: number;
+  settled_at: string;
+};
+
+export type TravelDocument = {
+  id: string;
+  name: string;
+  category: string;
+  mime_type: string;
+  size_bytes: number;
+  expires_on?: string | null;
+  created_at: string;
 };
 
 export type BudgetGuardian = {

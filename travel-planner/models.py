@@ -129,6 +129,22 @@ class Guidebook(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
+class TravelDocument(Base):
+    __tablename__ = "travel_documents"
+    __table_args__ = (Index("ix_travel_documents_trip", "saved_trip_id", "created_at"),)
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    saved_trip_id: Mapped[int] = mapped_column(ForeignKey("saved_trips.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(240))
+    category: Mapped[str] = mapped_column(String(40), default="Other")
+    mime_type: Mapped[str] = mapped_column(String(100))
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    storage_name: Mapped[str] = mapped_column(String(160), unique=True)
+    expires_on: Mapped[str] = mapped_column(String(10), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class TripShare(Base):
     __tablename__ = "trip_shares"
     __table_args__ = (UniqueConstraint("saved_trip_id", name="uq_trip_share_trip"),)

@@ -6,6 +6,8 @@ import secrets
 import sys
 import time as monotonic_time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
 from dataclasses import replace
 from datetime import date, datetime, time, timezone
 from decimal import Decimal, InvalidOperation
@@ -27,7 +29,8 @@ import sentry_sdk
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from flask import Flask, g, jsonify, render_template, request, send_from_directory, session
+import requests
+from flask import Flask, g, jsonify, render_template, request, send_file, send_from_directory, session
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from sqlalchemy import text
@@ -41,20 +44,24 @@ from auth_store import (
     create_journal_entry,
     create_password_reset,
     create_saved_trip,
+    create_travel_document,
     create_user,
     delete_journal_entry,
     delete_user_account,
     delete_saved_trip,
+    delete_travel_document,
     disable_trip_sharing,
     enable_trip_sharing,
     get_public_trip_by_share_token,
     get_saved_trip,
+    get_travel_document,
     get_user,
     get_user_preferences,
     init_auth_store,
     list_journal_entries,
     list_pending_users,
     list_saved_trips,
+    list_travel_documents,
     record_activity_feedback,
     set_user_status,
     update_journal_entry,
@@ -119,8 +126,11 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SECURE=settings.secure_cookies,
     SESSION_COOKIE_SAMESITE="Lax",
-    MAX_CONTENT_LENGTH=1_000_000,
+    MAX_CONTENT_LENGTH=10_000_000,
 )
+VAULT_ROOT = Path(os.getenv("VAULT_STORAGE_DIR", Path.cwd() / ".crewai_runtime" / "travel-vault")).resolve()
+VAULT_ROOT.mkdir(parents=True, exist_ok=True)
+ALLOWED_DOCUMENT_TYPES = {"application/pdf", "image/jpeg", "image/png", "image/webp"}
 limiter = Limiter(
     key_func=lambda: str(session.get("user_id") or get_remote_address()),
     app=app,
@@ -148,6 +158,9 @@ def finalize_response(response):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    if request.path.startswith("/api/auth/"):
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        response.headers["Pragma"] = "no-cache"
     response.set_cookie(
         "wanderful_csrf",
         csrf_token(),
@@ -424,6 +437,108 @@ def trip_budget_put(trip_id: int):
     state = normalize_budget_state(_json_body())
     trip = update_trip_budget(user["id"], trip_id, state)
     return jsonify({"trip": trip, "budget": build_budget_guardian(trip or {})})
+
+
+@app.get("/api/trips/<int:trip_id>/documents")
+@require_active_user
+def trip_documents_get(trip_id: int):
+    user = current_user(require_active=True)
+    if not get_saved_trip(user["id"], trip_id):
+        return jsonify({"error": "Saved trip not found."}), 404
+    documents = list_travel_documents(user["id"], trip_id)
+    return jsonify({"documents": [{key: value for key, value in document.items() if key != "storage_name"} for document in documents]})
+
+
+@app.post("/api/trips/<int:trip_id>/documents")
+@require_active_user
+@limiter.limit("30 per hour")
+def trip_documents_post(trip_id: int):
+    user = current_user(require_active=True)
+    if not get_saved_trip(user["id"], trip_id):
+        return jsonify({"error": "Saved trip not found."}), 404
+    upload = request.files.get("file")
+    if not upload or not upload.filename:
+        return jsonify({"error": "Choose a PDF or image to upload."}), 400
+    content = upload.read(8_000_001)
+    if not content:
+        return jsonify({"error": "The selected file is empty."}), 400
+    if len(content) > 8_000_000:
+        return jsonify({"error": "Documents must be 8 MB or smaller."}), 400
+    mime_type = _document_mime_type(content, upload.mimetype)
+    if mime_type not in ALLOWED_DOCUMENT_TYPES:
+        return jsonify({"error": "Only PDF, JPG, PNG, and WebP files are supported."}), 400
+    extension = {"application/pdf": ".pdf", "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}[mime_type]
+    storage_name = f"{user['id']}-{trip_id}-{uuid.uuid4().hex}{extension}"
+    target = (VAULT_ROOT / storage_name).resolve()
+    if target.parent != VAULT_ROOT:
+        return jsonify({"error": "Invalid vault path."}), 400
+    target.write_bytes(content)
+    try:
+        document = create_travel_document(user["id"], trip_id, {
+            "name": Path(upload.filename).name,
+            "category": _clean_text(request.form.get("category")) or "Other",
+            "mime_type": mime_type,
+            "size_bytes": len(content),
+            "storage_name": storage_name,
+            "expires_on": _clean_text(request.form.get("expires_on")),
+        })
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
+    return jsonify({"document": {key: value for key, value in document.items() if key != "storage_name"}}), 201
+
+
+@app.get("/api/trips/<int:trip_id>/documents/<document_id>/download")
+@require_active_user
+def trip_document_download(trip_id: int, document_id: str):
+    user = current_user(require_active=True)
+    document = get_travel_document(user["id"], trip_id, document_id)
+    if not document:
+        return jsonify({"error": "Document not found."}), 404
+    target = (VAULT_ROOT / document["storage_name"]).resolve()
+    if target.parent != VAULT_ROOT or not target.is_file():
+        return jsonify({"error": "Document file is unavailable."}), 404
+    return send_file(target, mimetype=document["mime_type"], as_attachment=True, download_name=document["name"])
+
+
+@app.delete("/api/trips/<int:trip_id>/documents/<document_id>")
+@require_active_user
+def trip_document_delete(trip_id: int, document_id: str):
+    user = current_user(require_active=True)
+    document = get_travel_document(user["id"], trip_id, document_id)
+    if not document:
+        return jsonify({"error": "Document not found."}), 404
+    target = (VAULT_ROOT / document["storage_name"]).resolve()
+    if target.parent == VAULT_ROOT:
+        try:
+            target.unlink(missing_ok=True)
+        except PermissionError:
+            return jsonify({"error": "Document is currently open. Close the download and try again."}), 409
+    delete_travel_document(user["id"], trip_id, document_id)
+    return jsonify({"ok": True})
+
+
+@app.post("/api/route-map")
+@require_active_user
+@limiter.limit("60 per hour")
+def route_map_post():
+    payload = _json_body()
+    destination = _clean_text(payload.get("destination"))[:160]
+    raw_stops = payload.get("stops") if isinstance(payload.get("stops"), list) else []
+    stops = []
+    for index, stop in enumerate(raw_stops[:8]):
+        if not isinstance(stop, dict):
+            continue
+        title = _clean_text(stop.get("title"))[:160]
+        location = _clean_text(stop.get("location"))[:180]
+        if title or location:
+            stops.append({"index": index, "title": title or location, "location": location or title})
+    if not destination or not stops:
+        return jsonify({"error": "Destination and at least one stop are required."}), 400
+    with ThreadPoolExecutor(max_workers=min(4, len(stops))) as executor:
+        coordinates = list(executor.map(lambda stop: _geocode_place(f"{stop['location']}, {destination}"), stops))
+    resolved = [{**stop, "coordinates": point} for stop, point in zip(stops, coordinates) if point]
+    return jsonify({"stops": resolved, "unresolved": len(stops) - len(resolved)})
 
 
 @app.get("/api/trips/<int:trip_id>/offline-pack")
@@ -923,6 +1038,38 @@ def _json_body() -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("Request body must be a JSON object.")
     return payload
+
+
+def _document_mime_type(content: bytes, _claimed: str | None) -> str:
+    if content.startswith(b"%PDF-"):
+        return "application/pdf"
+    if content.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if content.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if content.startswith(b"RIFF") and content[8:12] == b"WEBP":
+        return "image/webp"
+    return ""
+
+
+@lru_cache(maxsize=800)
+def _geocode_place(query: str) -> dict[str, float] | None:
+    api_key = os.getenv("OPENWEATHER_API_KEY", "").strip()
+    if not api_key:
+        return None
+    try:
+        response = requests.get(
+            "https://api.openweathermap.org/geo/1.0/direct",
+            params={"q": query, "limit": 1, "appid": api_key},
+            timeout=7,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if isinstance(payload, list) and payload:
+            return {"lat": round(float(payload[0]["lat"]), 6), "lng": round(float(payload[0]["lon"]), 6)}
+    except (requests.RequestException, KeyError, TypeError, ValueError):
+        logger.warning("Route stop geocoding failed", extra={"query": query})
+    return None
 
 
 def _clean_text(value: Any) -> str:

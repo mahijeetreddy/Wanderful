@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -11,7 +12,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 from config import settings
 from database import Base, engine, ensure_local_column, session_scope
-from models import JournalEntry, PasswordResetToken, SavedTrip, TripShare, User, UserPreference
+from models import JournalEntry, PasswordResetToken, SavedTrip, TravelDocument, TripShare, User, UserPreference
 from trip_intelligence import VALID_CONSTRAINTS, update_memory
 
 
@@ -205,6 +206,59 @@ def update_trip_budget(user_id: int, trip_id: int, budget_state: dict[str, Any])
             return None
         trip.budget_state_json = budget_state
     return get_saved_trip(user_id, trip_id)
+
+
+def list_travel_documents(user_id: int, trip_id: int) -> list[dict[str, Any]]:
+    with session_scope() as db:
+        documents = db.scalars(
+            select(TravelDocument)
+            .where(TravelDocument.user_id == user_id, TravelDocument.saved_trip_id == trip_id)
+            .order_by(TravelDocument.created_at.desc())
+        ).all()
+        return [_travel_document_dict(document) for document in documents]
+
+
+def create_travel_document(user_id: int, trip_id: int, metadata: dict[str, Any]) -> dict[str, Any]:
+    document = TravelDocument(
+        id=uuid.uuid4().hex,
+        user_id=user_id,
+        saved_trip_id=trip_id,
+        name=str(metadata["name"])[:240],
+        category=str(metadata.get("category") or "Other")[:40],
+        mime_type=str(metadata["mime_type"])[:100],
+        size_bytes=int(metadata["size_bytes"]),
+        storage_name=str(metadata["storage_name"])[:160],
+        expires_on=str(metadata.get("expires_on") or "")[:10],
+    )
+    with session_scope() as db:
+        db.add(document)
+        db.flush()
+        document_id = document.id
+    return get_travel_document(user_id, trip_id, document_id) or {}
+
+
+def get_travel_document(user_id: int, trip_id: int, document_id: str) -> dict[str, Any] | None:
+    with session_scope() as db:
+        document = db.scalar(select(TravelDocument).where(
+            TravelDocument.id == document_id,
+            TravelDocument.user_id == user_id,
+            TravelDocument.saved_trip_id == trip_id,
+        ))
+        return _travel_document_dict(document) if document else None
+
+
+def delete_travel_document(user_id: int, trip_id: int, document_id: str) -> dict[str, Any] | None:
+    with session_scope() as db:
+        document = db.scalar(select(TravelDocument).where(
+            TravelDocument.id == document_id,
+            TravelDocument.user_id == user_id,
+            TravelDocument.saved_trip_id == trip_id,
+        ))
+        if not document:
+            return None
+        value = _travel_document_dict(document)
+        db.delete(document)
+        return value
 
 
 def apply_disruption_scenario(
@@ -438,6 +492,19 @@ def _trip_dict(trip: SavedTrip, *, share_token: str | None = None) -> dict[str, 
         "liveState": trip.live_state_json or {},
         "budgetState": trip.budget_state_json or {},
         "disruptionHistory": trip.disruption_history_json or [],
+    }
+
+
+def _travel_document_dict(document: TravelDocument) -> dict[str, Any]:
+    return {
+        "id": document.id,
+        "name": document.name,
+        "category": document.category,
+        "mime_type": document.mime_type,
+        "size_bytes": document.size_bytes,
+        "storage_name": document.storage_name,
+        "expires_on": document.expires_on or None,
+        "created_at": document.created_at.isoformat() if document.created_at else None,
     }
 
 

@@ -60,6 +60,19 @@ def test_api_404_is_json(client):
     assert response.is_json
 
 
+def test_logout_clears_session_and_auth_responses_are_not_cached(client):
+    register(client, "Admin", "admin@example.com")
+    assert client.get("/api/auth/me").get_json()["user"]["email"] == "admin@example.com"
+
+    response = client.post("/api/auth/logout")
+
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "no-store, max-age=0"
+    assert response.headers["Pragma"] == "no-cache"
+    assert client.get("/api/auth/me").get_json()["user"] is None
+    assert client.get("/api/trips").status_code == 403
+
+
 def test_readiness_requires_current_database_revision(client):
     response = client.get("/health/ready")
 

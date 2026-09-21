@@ -19,6 +19,7 @@ EXPECTED_TABLES = {
     "plan_jobs",
     "saved_trips",
     "trip_shares",
+    "travel_documents",
     "user_preferences",
     "users",
 }
@@ -61,7 +62,7 @@ def test_alembic_builds_fresh_schema(tmp_path: Path):
         assert set(inspector.get_table_names()) == EXPECTED_TABLES
         with engine.connect() as connection:
             revision = connection.exec_driver_sql("select version_num from alembic_version").scalar_one()
-        assert revision == "20260919_04"
+        assert revision == "20260920_05"
     finally:
         engine.dispose()
 
@@ -85,6 +86,6 @@ def test_alembic_adopts_tables_created_by_legacy_development_startup(tmp_path: P
     try:
         with engine.connect() as connection:
             revision = connection.exec_driver_sql("select version_num from alembic_version").scalar_one()
-        assert revision == "20260919_04"
+        assert revision == "20260920_05"
     finally:
         engine.dispose()

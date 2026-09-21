@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { AlertTriangle, ArrowDown, ArrowRight, BookOpen, Bookmark, Braces, Building2, CalendarDays, Check, CircleUserRound, Clock, Cloud, CloudFog, CloudLightning, CloudRain, CloudSnow, Compass, Copy, Download, ExternalLink, FileText, ListChecks, Loader2, Lock, MapPin, Plane, RotateCcw, Route, Search, Share2, Sparkles, Sun, Users, Wallet } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowRight, BookOpen, Bookmark, Braces, Building2, CalendarDays, Check, CircleUserRound, Clock, Cloud, CloudFog, CloudLightning, CloudRain, CloudSnow, Compass, Copy, Download, ExternalLink, FileText, FolderLock, ListChecks, Loader2, Lock, MapPin, Plane, ReceiptText, RotateCcw, Route, Search, Share2, Sparkles, Sun, Users, Wallet } from "lucide-react";
 import gsap from "gsap";
 import L from "leaflet";
 import { MapContainer, Marker, Popup, TileLayer, useMap } from "react-leaflet";
@@ -14,7 +14,10 @@ import { GuidebookPanel } from "./features/guidebook/GuidebookPanel";
 import { JobHistoryPanel } from "./features/jobs/JobHistoryPanel";
 import { JournalPanel } from "./features/journal/JournalPanel";
 import { TripIntelligencePanel } from "./features/intelligence/TripIntelligencePanel";
+import { GroupExpensesPanel } from "./features/expenses/GroupExpensesPanel";
 import { InfoSections } from "./features/marketing/InfoSections";
+import { RouteMapPanel } from "./features/routes/RouteMapPanel";
+import { TravelVaultPanel } from "./features/vault/TravelVaultPanel";
 import type {
   AuthMode,
   AuthUser,
@@ -82,9 +85,13 @@ const loadingMessages = [
   "Polishing your itinerary into a structured Markdown plan.",
 ];
 
-const STORAGE_KEY = "wanderful.currentTrip.v2";
+const WORKSPACE_KEY_PREFIX = "wanderful.currentTrip.v3";
 const SAVED_TRIPS_KEY = "wanderful.savedTrips.v1";
-const LEGACY_STORAGE_KEYS = ["wanderful.currentTrip"];
+const LEGACY_STORAGE_KEYS = ["wanderful.currentTrip", "wanderful.currentTrip.v2"];
+
+function workspaceStorageKey(userId?: number | null) {
+  return `${WORKSPACE_KEY_PREFIX}:${userId ? `user-${userId}` : "guest"}`;
+}
 
 function App() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -104,7 +111,8 @@ function App() {
   const [regeneratingDay, setRegeneratingDay] = useState<number | null>(null);
   const [options, setOptions] = useState<PlannerOptions>(emptyOptions);
   const [resultTab, setResultTab] = useState<ResultTab>("itinerary");
-  const [hydrated, setHydrated] = useState(false);
+  const [authResolved, setAuthResolved] = useState(false);
+  const [hydratedScope, setHydratedScope] = useState<string | null>(null);
   const [savedTrips, setSavedTrips] = useState<SavedTrip[]>([]);
   const [savedTripsOpen, setSavedTripsOpen] = useState(false);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
@@ -118,10 +126,16 @@ function App() {
   const [journalTrip, setJournalTrip] = useState<SavedTrip | null>(null);
   const [guidebookTrip, setGuidebookTrip] = useState<SavedTrip | null>(null);
   const [intelligenceTrip, setIntelligenceTrip] = useState<SavedTrip | null>(null);
+  const [expenseTrip, setExpenseTrip] = useState<SavedTrip | null>(null);
+  const [vaultTrip, setVaultTrip] = useState<SavedTrip | null>(null);
   const [passwordResetToken, setPasswordResetToken] = useState(
     () => new URLSearchParams(window.location.search).get("reset_token") || "",
   );
   const [preferences, setPreferences] = useState<UserPreferences | null>(null);
+  const planAbortRef = useRef<AbortController | null>(null);
+  const authRequestEpochRef = useRef(0);
+  const workspaceScope = authResolved ? workspaceStorageKey(authUser?.id) : null;
+  const hydrated = Boolean(workspaceScope && hydratedScope === workspaceScope);
 
   useEffect(() => {
     setHeroVisible(true);
@@ -137,12 +151,22 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (!workspaceScope) {
+      return;
+    }
+    setHydratedScope(null);
+    setForm(initialForm);
+    setItinerary("");
+    setStructuredItinerary(null);
+    setActivePlanJobId(null);
+    setOptions(emptyOptions);
+    setResultTab("itinerary");
+    setError("");
     try {
       for (const legacyKey of LEGACY_STORAGE_KEYS) {
         window.localStorage.removeItem(legacyKey);
       }
-      const saved = window.localStorage.getItem(STORAGE_KEY);
-      loadGuestSavedTrips();
+      const saved = window.localStorage.getItem(workspaceScope);
       if (saved) {
         const parsed = JSON.parse(saved) as {
           form?: PlannerForm;
@@ -172,11 +196,11 @@ function App() {
         }
       }
     } catch {
-      window.localStorage.removeItem(STORAGE_KEY);
+      window.localStorage.removeItem(workspaceScope);
     } finally {
-      setHydrated(true);
+      setHydratedScope(workspaceScope);
     }
-  }, []);
+  }, [workspaceScope]);
 
   useEffect(() => {
     if (!hydrated) {
@@ -191,8 +215,8 @@ function App() {
       activePlanJobId,
       savedAt: new Date().toISOString(),
     };
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-  }, [activePlanJobId, form, hydrated, itinerary, options, resultTab, structuredItinerary]);
+    window.localStorage.setItem(workspaceScope as string, JSON.stringify(payload));
+  }, [activePlanJobId, form, hydrated, itinerary, options, resultTab, structuredItinerary, workspaceScope]);
 
   useEffect(() => {
     if (!hydrated) {
@@ -207,12 +231,14 @@ function App() {
     if (!hydrated) {
       return;
     }
+    const controller = new AbortController();
     if (authUser) {
-      void loadAccountWorkspace();
+      void loadAccountWorkspace(controller.signal);
     } else {
       loadGuestSavedTrips();
       setPreferences(null);
     }
+    return () => controller.abort();
   }, [authUser, hydrated]);
 
   useEffect(() => {
@@ -310,6 +336,9 @@ function App() {
 
   const submitPlan = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    planAbortRef.current?.abort();
+    const controller = new AbortController();
+    planAbortRef.current = controller;
     setLoading(true);
     setError("");
     setItinerary("");
@@ -324,6 +353,7 @@ function App() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(form),
+        signal: controller.signal,
       });
       const payload = await parsePlanResponse(response) as PlanResponse & { job_id?: string; job?: PlanJob };
       if (!response.ok) {
@@ -332,11 +362,13 @@ function App() {
       if (!payload.job_id) {
         throw new Error("Planner did not return a job id.");
       }
-      await pollPlanJob(payload.job_id);
+      await pollPlanJob(payload.job_id, controller.signal);
       setResultTab("itinerary");
     } catch (caught) {
+      if (controller.signal.aborted || (caught instanceof DOMException && caught.name === "AbortError")) return;
       setError(caught instanceof Error ? caught.message : "Planner request failed.");
     } finally {
+      if (planAbortRef.current === controller) planAbortRef.current = null;
       setLoading(false);
       setJobProgress("");
     }
@@ -351,11 +383,11 @@ function App() {
     setActivePlanJobId(job.id);
   };
 
-  const pollPlanJob = async (jobId: string) => {
+  const pollPlanJob = async (jobId: string, signal?: AbortSignal) => {
     const maxPolls = 240;
     for (let attempt = 0; attempt < maxPolls; attempt += 1) {
-      await wait(attempt < 4 ? 900 : 1600);
-      const response = await apiFetch(`/api/plan-jobs/${jobId}`);
+      await wait(attempt < 4 ? 900 : 1600, signal);
+      const response = await apiFetch(`/api/plan-jobs/${jobId}`, { signal });
       const payload = await parsePlanResponse(response) as PlanResponse & { job?: PlanJob };
       if (!response.ok || !payload.job) {
         throw new Error(payload.error || "Could not read planner job status.");
@@ -488,25 +520,112 @@ function App() {
     }
   };
 
-  const downloadItinerary = () => {
-    const blob = new Blob([itinerary], { type: "text/markdown;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "wanderful-itinerary.md";
-    link.click();
-    URL.revokeObjectURL(url);
+  const downloadItineraryPdf = async () => {
+    if (!itinerary) {
+      return;
+    }
+    try {
+      const { jsPDF } = await import("jspdf");
+      const doc = new jsPDF({ unit: "mm", format: "a4" });
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const margin = 20;
+      const contentWidth = pageWidth - margin * 2;
+      let y = 22;
+
+      const ensureSpace = (height: number) => {
+        if (y + height > pageHeight - 20) {
+          doc.addPage();
+          y = 22;
+        }
+      };
+      const write = (text: string, size = 10, color: [number, number, number] = [48, 60, 64], gap = 4) => {
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(size);
+        doc.setTextColor(...color);
+        const lines = doc.splitTextToSize(text, contentWidth) as string[];
+        const height = Math.max(5, lines.length * (size * 0.42));
+        ensureSpace(height + gap);
+        doc.text(lines, margin, y);
+        y += height + gap;
+      };
+      const heading = (text: string, size = 15) => {
+        ensureSpace(13);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(size);
+        doc.setTextColor(9, 81, 86);
+        doc.text(text, margin, y);
+        y += size * 0.55 + 4;
+      };
+
+      doc.setFillColor(7, 30, 33);
+      doc.rect(0, 0, pageWidth, 45, "F");
+      doc.setTextColor(114, 215, 220);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.text("WANDERFUL", margin, 16);
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(24);
+      doc.text(form.destination || "Your itinerary", margin, 31);
+      y = 55;
+      write(`${formatDate(form.start_date)} to ${formatDate(form.end_date)}  |  ${form.adults} traveler${form.adults === "1" ? "" : "s"}  |  ${form.currency_code} ${form.budget || "Flexible budget"}`, 10, [74, 88, 91], 7);
+
+      const selectedHotelId = structuredItinerary?.locked_hotel_id || structuredItinerary?.recommended_hotel_id;
+      const selectedHotel = options.hotels.find((hotel) => hotel.id === selectedHotelId) || options.hotels[0];
+      const selectedFlightId = structuredItinerary?.locked_flight_id || structuredItinerary?.recommended_flight_id;
+      const selectedFlight = options.flights.find((flight) => flight.id === selectedFlightId) || options.flights[0];
+      if (selectedHotel || selectedFlight) {
+        heading("Trip essentials");
+        if (selectedHotel) {
+          write(`Stay: ${selectedHotel.name}${selectedHotel.nightly_rate ? ` - ${selectedHotel.nightly_rate}/night` : ""}`);
+        }
+        if (selectedFlight) {
+          const route = selectedFlight.segments?.[0];
+          write(`Flight: ${route?.airline || "Selected flight"}${route?.from && route?.to ? ` - ${route.from} to ${route.to}` : ""}${selectedFlight.total_price ? ` - ${selectedFlight.currency || form.currency_code} ${selectedFlight.total_price}` : ""}`);
+        }
+        y += 2;
+      }
+
+      const days = structuredItinerary?.days || [];
+      if (days.length) {
+        heading("Day by day", 17);
+        days.forEach((day) => {
+          ensureSpace(24);
+          heading(`Day ${day.day_number}${day.date ? ` - ${formatDate(day.date)}` : ""}: ${day.title}`, 12);
+          (day.activities || []).slice(0, 5).forEach((activity) => {
+            const time = activity.time || activity.period || "Any time";
+            const location = activity.location ? ` - ${activity.location}` : "";
+            write(`${time}  ${activity.title}${location}`, 9.5, [48, 60, 64], 2.5);
+          });
+          if (day.transit_note) {
+            write(`Getting around: ${day.transit_note}`, 9, [86, 100, 103], 4);
+          }
+          y += 2;
+        });
+      } else {
+        heading("Itinerary", 17);
+        itinerary.split("\n").map((line) => line.replace(/^#+\s*/, "").replace(/^[-*]\s*/, "").trim()).filter(Boolean).slice(0, 55).forEach((line) => write(line, 9.5));
+      }
+
+      const pageCount = doc.getNumberOfPages();
+      for (let page = 1; page <= pageCount; page += 1) {
+        doc.setPage(page);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8);
+        doc.setTextColor(130, 140, 142);
+        doc.text(`Wanderful  |  ${page} / ${pageCount}`, pageWidth - margin, pageHeight - 10, { align: "right" });
+      }
+      const filename = (form.destination || "trip").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+      doc.save(`wanderful-${filename || "itinerary"}.pdf`);
+    } catch (caught) {
+      setError(caught instanceof Error ? `Could not create PDF: ${caught.message}` : "Could not create PDF.");
+    }
   };
 
   const resetPlan = () => {
+    clearActiveTripState();
     setError("");
-    setItinerary("");
-    setStructuredItinerary(null);
-    setActivePlanJobId(null);
-    setOptions(emptyOptions);
-    setForm(initialForm);
-    setResultTab("itinerary");
-    window.localStorage.removeItem(STORAGE_KEY);
+    if (workspaceScope) window.localStorage.removeItem(workspaceScope);
   };
 
   const saveCurrentTrip = () => {
@@ -569,12 +688,13 @@ function App() {
     }
   };
 
-  const loadAccountWorkspace = async () => {
+  const loadAccountWorkspace = async (signal?: AbortSignal) => {
     try {
       const [tripsResponse, preferencesResponse] = await Promise.all([
-        apiFetch("/api/trips"),
-        apiFetch("/api/preferences"),
+        apiFetch("/api/trips", { signal }),
+        apiFetch("/api/preferences", { signal }),
       ]);
+      if (signal?.aborted) return;
       if (tripsResponse.ok) {
         const payload = await parsePlanResponse(tripsResponse) as PlanResponse & { trips?: SavedTrip[] };
         setSavedTrips(Array.isArray(payload.trips) ? payload.trips : []);
@@ -586,7 +706,8 @@ function App() {
           applyPreferencesToForm(payload.preferences);
         }
       }
-    } catch {
+    } catch (caught) {
+      if (signal?.aborted || (caught instanceof DOMException && caught.name === "AbortError")) return;
       setError("Could not load account workspace.");
     }
   };
@@ -690,19 +811,59 @@ function App() {
   };
 
   const refreshAuthUser = async () => {
+    const requestEpoch = ++authRequestEpochRef.current;
     try {
       const response = await apiFetch("/api/auth/me");
       const payload = await parsePlanResponse(response) as PlanResponse & { user?: AuthUser | null };
-      setAuthUser(payload.user || null);
+      if (requestEpoch === authRequestEpochRef.current) setAuthUser(payload.user || null);
     } catch {
-      setAuthUser(null);
+      if (requestEpoch === authRequestEpochRef.current) setAuthUser(null);
+    } finally {
+      if (requestEpoch === authRequestEpochRef.current) setAuthResolved(true);
     }
   };
 
+  const clearActiveTripState = () => {
+    planAbortRef.current?.abort();
+    planAbortRef.current = null;
+    setLoading(false);
+    setJobProgress("");
+    setRegeneratingDay(null);
+    setItinerary("");
+    setStructuredItinerary(null);
+    setActivePlanJobId(null);
+    setOptions(emptyOptions);
+    setForm(initialForm);
+    setResultTab("itinerary");
+    setError("");
+    setJournalTrip(null);
+    setGuidebookTrip(null);
+    setIntelligenceTrip(null);
+    setExpenseTrip(null);
+    setVaultTrip(null);
+    setJobHistoryOpen(false);
+    setAdminOpen(false);
+  };
+
   const logout = async () => {
-    await apiFetch("/api/auth/logout", { method: "POST" });
+    authRequestEpochRef.current += 1;
+    const signedInScope = authUser ? workspaceStorageKey(authUser.id) : null;
+    if (signedInScope) window.localStorage.removeItem(signedInScope);
+    window.localStorage.removeItem(workspaceStorageKey(null));
+    clearActiveTripState();
+    setSavedTrips([]);
     setAuthUser(null);
+    setAuthResolved(true);
+    setHydratedScope(null);
     setPreferences(null);
+    setSavedTripsOpen(false);
+    setProfileOpen(false);
+    try {
+      const response = await apiFetch("/api/auth/logout", { method: "POST" });
+      if (!response.ok) throw new Error("Server logout failed.");
+    } catch {
+      setError("This device was cleared, but the server could not confirm logout. Try again before leaving this device.");
+    }
   };
 
   return (
@@ -810,15 +971,13 @@ function App() {
                   Venture farther.
                   <span className="mt-2 block font-serif font-normal italic tracking-[-0.04em] text-white/62">Stay in rhythm.</span>
                 </h1>
-                <p className="mt-7 max-w-xl text-base leading-7 text-white/68 sm:text-lg">
-                  A travel workspace that plans with live context, protects what matters, and adapts the moment your day changes.
-                </p>
+                <p className="mt-7 max-w-xl text-base text-white/68 sm:text-lg">Plan, compare, save, and adapt your trip in one place.</p>
                 <div className="mt-8 flex flex-wrap items-center gap-3">
                   <button type="button" onClick={scrollToPlanner} className="primary-cta inline-flex items-center gap-3 rounded-full px-6 py-3.5 text-sm font-semibold text-[#06181a]">
                     Build my journey <ArrowRight size={16} />
                   </button>
                   <button type="button" onClick={() => setSavedTripsOpen(true)} className="secondary-cta inline-flex items-center gap-2 rounded-full px-5 py-3.5 text-sm text-white/78">
-                    <Bookmark size={15} /> Open travel workspace
+                    <Bookmark size={15} /> Saved trips
                   </button>
                 </div>
               </div>
@@ -851,9 +1010,8 @@ function App() {
           <div className="mx-auto mb-10 flex max-w-[1240px] flex-wrap items-end justify-between gap-5">
             <div>
               <p className="section-kicker">Your travel intelligence desk</p>
-              <h2 className="mt-3 max-w-3xl text-[clamp(38px,5vw,68px)] font-medium leading-[.98] tracking-[-.055em] text-white">Build a trip that can <span className="font-serif font-normal italic text-[#72d7dc]">think on its feet.</span></h2>
+              <h2 className="mt-3 max-w-3xl text-[clamp(38px,5vw,68px)] font-medium leading-[.98] tracking-[-.055em] text-white">Plan your <span className="font-serif font-normal italic text-[#72d7dc]">whole trip.</span></h2>
             </div>
-            <p className="max-w-sm text-sm leading-6 text-white/48">Give Wanderful the boundaries. It will coordinate the options, surface the tradeoffs, and keep the plan usable when reality intervenes.</p>
           </div>
           <div className="planner-grid mx-auto grid w-full max-w-[1240px] gap-5 lg:grid-cols-[0.76fr_1.24fr]">
             <div className="planner-story-card order-2 rounded-[30px] p-6 sm:p-8 lg:order-1 lg:sticky lg:top-28 lg:self-start">
@@ -861,26 +1019,21 @@ function App() {
                 <div>
                   <p className="section-kicker">01 / Brief the journey</p>
                   <h3 className="mt-4 text-3xl font-medium leading-[1.02] tracking-[-0.045em] text-white sm:text-5xl">
-                    Your intent in. A resilient trip out.
+                    Everything in one place.
                   </h3>
-                  <p className="mt-4 max-w-md text-sm leading-6 text-white/48">Wanderful turns six essentials into a living itinerary with evidence, alternatives, and room to change.</p>
+                  <p className="mt-4 max-w-md text-sm text-white/48">Flights, stays, daily plans, and budget.</p>
                 </div>
                 <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-[#65d2d9]/18 bg-[#65d2d9]/10 text-[#72d7dc]"><Sparkles size={19} strokeWidth={1.5} /></span>
               </div>
 
-              <div className="grid gap-3 text-sm text-white/72">
-                <InfoRow icon={<Route size={16} strokeWidth={1.5} />} title="Live context, one workspace" text="Routes, stays, weather, and local signals stay connected to the itinerary." />
-                <InfoRow icon={<ListChecks size={16} strokeWidth={1.5} />} title="Constraints that mean something" text="Lock non-negotiables and let flexible moments absorb the change." />
-                <InfoRow icon={<Sparkles size={16} strokeWidth={1.5} />} title="A planner that learns" text="Every loved and skipped activity sharpens the next recommendation." />
-              </div>
-              <div className="mt-7 border-t border-white/9 pt-5"><p className="text-[10px] uppercase tracking-[.16em] text-white/34">Designed for the whole trip</p><div className="mt-3 flex flex-wrap gap-2">{["Plan", "Book", "Adapt", "Remember"].map((item) => <span key={item} className="rounded-full border border-white/9 px-3 py-1.5 text-xs text-white/56">{item}</span>)}</div></div>
+              <div className="mt-7 grid grid-cols-2 gap-2">{[[<Route size={15}/>, "Daily route"], [<Building2 size={15}/>, "Stays"], [<Plane size={15}/>, "Flights"], [<Wallet size={15}/>, "Budget"]].map(([icon, label]) => <div key={String(label)} className="flex items-center gap-2 rounded-2xl border border-white/8 bg-white/[.03] p-3 text-sm text-white/65">{icon}{label}</div>)}</div>
             </div>
 
             <form onSubmit={submitPlan} className="planner-form-panel order-1 rounded-[30px] p-5 sm:p-8 lg:order-2">
               <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <p className="section-kicker">02 / Set the boundaries</p>
-                  <h3 className="mt-2 text-2xl font-medium tracking-[-.03em] text-white sm:text-3xl">Where, when, and what matters?</h3>
+                  <h3 className="mt-2 text-2xl font-medium tracking-[-.03em] text-white sm:text-3xl">Tell us the essentials.</h3>
                 </div>
                 <span className="rounded-full border border-[#65d2d9]/15 bg-[#65d2d9]/8 px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.12em] text-white/70">
                   {authUser ? "Account workspace" : "Private draft"}
@@ -928,7 +1081,7 @@ function App() {
                 className="primary-cta mt-6 flex w-full items-center justify-center gap-3 rounded-[18px] px-8 py-4 text-[15px] font-semibold text-[#06181a] transition-all duration-300 active:scale-[0.99] disabled:cursor-wait disabled:opacity-60"
               >
                 {loading ? <Loader2 className="animate-spin" size={18} /> : <ArrowDown size={18} />}
-                {loading ? loadingMessages[loadingMessageIndex] : "Generate my Wanderful itinerary"}
+                {loading ? loadingMessages[loadingMessageIndex] : "Build my trip"}
               </button>
               {loading && jobProgress ? (
                 <p className="mt-3 rounded-2xl border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.055] px-3 py-2 text-sm leading-relaxed text-white/62">
@@ -944,13 +1097,13 @@ function App() {
             <section className="results-workspace mx-auto mt-8 max-w-[1240px] rounded-[32px] p-4 sm:p-7">
               <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <p className="section-kicker">{itinerary ? "03 / Your travel workspace" : "Live trip options"}</p>
-                  <h3 className="mt-2 text-2xl font-medium tracking-[-.03em] text-white sm:text-3xl">{itinerary ? "Your journey, ready to shape" : "Provider data is ready"}</h3>
+                  <p className="section-kicker">{itinerary ? "Your trip" : "Trip options"}</p>
+                  <h3 className="mt-2 text-2xl font-medium tracking-[-.03em] text-white sm:text-3xl">{itinerary ? form.destination : "Options ready"}</h3>
                 </div>
                 {itinerary ? <div className="flex gap-2">
                   <button onClick={copyItinerary} className="action-button" type="button"><Copy size={15} /> Copy</button>
                   <button onClick={saveCurrentTrip} className="action-button" type="button"><FileText size={15} /> Save</button>
-                  <button onClick={downloadItinerary} className="action-button" type="button"><Download size={15} /> Download</button>
+                  <button onClick={() => void downloadItineraryPdf()} className="action-button" type="button"><Download size={15} /> PDF</button>
                   <button onClick={resetPlan} className="action-button" type="button"><RotateCcw size={15} /> New Trip</button>
                 </div> : null}
               </div>
@@ -985,6 +1138,8 @@ function App() {
         onOpenJournal={setJournalTrip}
         onOpenGuidebook={setGuidebookTrip}
         onOpenIntelligence={setIntelligenceTrip}
+        onOpenExpenses={setExpenseTrip}
+        onOpenVault={setVaultTrip}
         onToggleShare={toggleTripSharing}
       />
       <AuthModal
@@ -993,6 +1148,9 @@ function App() {
         onModeChange={setAuthMode}
         onClose={() => setAuthOpen(false)}
         onAuthenticated={(user) => {
+          authRequestEpochRef.current += 1;
+          clearActiveTripState();
+          setHydratedScope(null);
           setAuthUser(user);
           setAuthOpen(false);
         }}
@@ -1035,6 +1193,15 @@ function App() {
           setSavedTrips((current) => current.map((trip) => trip.id === updatedTrip.id ? updatedTrip : trip));
         }}
       />
+      <GroupExpensesPanel
+        trip={expenseTrip}
+        onClose={() => setExpenseTrip(null)}
+        onTripUpdated={(updatedTrip) => {
+          setExpenseTrip(updatedTrip);
+          setSavedTrips((current) => current.map((trip) => trip.id === updatedTrip.id ? updatedTrip : trip));
+        }}
+      />
+      <TravelVaultPanel trip={vaultTrip} onClose={() => setVaultTrip(null)} />
       <PasswordResetModal
         token={passwordResetToken}
         onClose={() => {
@@ -1161,8 +1328,22 @@ function useEscapeToClose(active: boolean, onClose: () => void) {
   }, [active, onClose]);
 }
 
-function wait(ms: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
+function wait(ms: number, signal?: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("Request aborted.", "AbortError"));
+      return;
+    }
+    const onAbort = () => {
+      window.clearTimeout(timer);
+      reject(new DOMException("Request aborted.", "AbortError"));
+    };
+    const timer = window.setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 function AuthModal({
@@ -1633,45 +1814,30 @@ function ItineraryResult({
   onRegenerateDay: (dayNumber: number) => void;
 }) {
   const tripLength = getTripLengthLabel(form.start_date, form.end_date);
-  const quickFacts = [
-    { icon: <MapPin size={16} />, label: "Route", value: `${form.origin || "Origin"} to ${form.destination || "Destination"}` },
-    { icon: <CalendarDays size={16} />, label: "Dates", value: `${formatDate(form.start_date)} - ${formatDate(form.end_date)}` },
-    { icon: <Wallet size={16} />, label: "Budget", value: `${form.currency_code || "USD"} ${form.budget || "0"}` },
-    { icon: <Users size={16} />, label: "Travelers", value: `${form.adults || "1"} adult${form.adults === "1" ? "" : "s"}` },
-  ];
-  const resultTabs: Array<{ id: ResultTab; label: string; detail: string; icon: ReactNode }> = [
-    { id: "itinerary", label: "Journey", detail: "Day-by-day plan", icon: <Route size={17} /> },
-    { id: "hotels", label: "Stays", detail: "Map and compare", icon: <Building2 size={17} /> },
-    { id: "flights", label: "Flights", detail: "Routes and fares", icon: <Plane size={17} /> },
-    { id: "raw", label: "Source", detail: "Full plan notes", icon: <Braces size={17} /> },
+  const resultTabs: Array<{ id: ResultTab; label: string; icon: ReactNode }> = [
+    { id: "itinerary", label: "Journey", icon: <Route size={17} /> },
+    { id: "hotels", label: "Stays", icon: <Building2 size={17} /> },
+    { id: "flights", label: "Flights", icon: <Plane size={17} /> },
+    { id: "raw", label: "Source", icon: <Braces size={17} /> },
   ];
 
   return (
     <div className="overflow-hidden rounded-[28px] border border-[#3fb6c4]/14 bg-[#0e1518]/70 shadow-[0_24px_90px_rgba(0,0,0,0.32)]">
       <div className="border-b border-[#3fb6c4]/12 bg-[#0e1518]/55 p-4 sm:p-5">
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {quickFacts.map((fact) => (
-            <div key={fact.label} className="rounded-3xl border border-[#3fb6c4]/12 bg-[#0e1518]/65 p-4">
-              <div className="flex items-center gap-2 text-white/55">
-                {fact.icon}
-                <span className="text-[10px] font-medium uppercase tracking-[0.16em]">{fact.label}</span>
-              </div>
-              <p className="mt-2 text-[15px] font-medium text-white">{fact.value}</p>
-            </div>
-          ))}
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <p className="text-[10px] font-medium uppercase tracking-[.18em] text-[#72d7dc]">Your trip</p>
+            <h3 className="mt-1 text-2xl font-medium tracking-[-.04em] text-white sm:text-3xl">{form.origin || "Origin"} <span className="text-white/28">→</span> {form.destination || "Destination"}</h3>
+          </div>
+          <div className="flex flex-wrap gap-2 text-xs text-white/55">
+            <span className="trip-meta-pill"><CalendarDays size={13}/>{formatDate(form.start_date)} – {formatDate(form.end_date)}</span>
+            <span className="trip-meta-pill"><Users size={13}/>{form.adults || "1"}</span>
+            <span className="trip-meta-pill"><Wallet size={13}/>{form.currency_code || "USD"} {form.budget || "0"}</span>
+            <span className="trip-meta-pill"><Clock size={13}/>{tripLength}</span>
+          </div>
         </div>
 
-        <div className="mt-4">
-          <div className="flex flex-wrap items-center gap-2 text-[12px] text-white/60">
-            <span className="inline-flex items-center gap-2 rounded-full border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.05] px-3 py-1.5">
-              <Clock size={13} /> {tripLength}
-            </span>
-            <span className="inline-flex items-center gap-2 rounded-full border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.05] px-3 py-1.5">
-              <Sparkles size={13} /> {form.interests || "Custom interests"}
-            </span>
-          </div>
-
-          <div role="tablist" aria-label="Trip workspace" className="result-tab-list mt-4 grid grid-cols-2 gap-1.5 rounded-[22px] p-1.5 sm:grid-cols-4">
+        <div role="tablist" aria-label="Trip workspace" className="result-tab-list mt-4 grid grid-cols-4 gap-1.5 rounded-[22px] p-1.5">
             {resultTabs.map((tab) => (
               <button
                 key={tab.id}
@@ -1691,13 +1857,12 @@ function ItineraryResult({
                   onTabChange(nextTab);
                   window.requestAnimationFrame(() => document.getElementById(`trip-tab-${nextTab}`)?.focus());
                 }}
-                className={`result-tab flex min-w-0 items-center gap-3 rounded-[17px] px-3 py-3 text-left transition ${activeTab === tab.id ? "result-tab-active" : "text-white/52 hover:text-white/82"}`}
+                className={`result-tab flex min-w-0 items-center justify-center gap-2 rounded-[17px] px-2 py-3 transition ${activeTab === tab.id ? "result-tab-active" : "text-white/52 hover:text-white/82"}`}
               >
-                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-white/[.055]">{tab.icon}</span>
-                <span className="min-w-0"><span className="block text-xs font-semibold text-inherit">{tab.label}</span><span className={`mt-0.5 hidden truncate text-[10px] sm:block ${activeTab === tab.id ? "text-[#06181a]/60" : "text-white/30"}`}>{tab.detail}</span></span>
+                <span className="hidden sm:block">{tab.icon}</span>
+                <span className="text-xs font-semibold sm:text-sm">{tab.label}</span>
               </button>
             ))}
-          </div>
         </div>
       </div>
 
@@ -1731,32 +1896,11 @@ function ItineraryResult({
             />
           )}
 
-          {itinerary && structuredItinerary ? <TripEssentials itinerary={structuredItinerary} /> : null}
+          {structuredItinerary?.days?.length ? (
+            <RouteMapPanel destination={form.destination} days={structuredItinerary.days} mapCenter={options.map_center} />
+          ) : null}
 
-          {itinerary ? <article className="itinerary-markdown max-h-[620px] overflow-auto rounded-[26px] border border-[#3fb6c4]/12 bg-[#0e1518]/68 p-5 sm:p-7">
-            <div className="mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-[#3fb6c4]/10 pb-4">
-              <div>
-                <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/45">Detailed Plan</p>
-                <p className="mt-1 text-lg font-medium text-white">Full itinerary notes</p>
-              </div>
-              <span className="rounded-full border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.06] px-3 py-1.5 text-[11px] text-white/58">
-                Markdown source preserved
-              </span>
-            </div>
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={{
-                a: ({ children, href }) => (
-                  <a href={href} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full border border-[#3fb6c4]/15 bg-[#3fb6c4]/10 px-2.5 py-1 text-white hover:bg-[#3fb6c4]/16">
-                    {children}
-                    <ExternalLink size={12} />
-                  </a>
-                ),
-              }}
-            >
-              {itinerary}
-            </ReactMarkdown>
-          </article> : null}
+          {itinerary && structuredItinerary ? <TripEssentials itinerary={structuredItinerary} /> : null}
         </div>
       ) : null}
 
@@ -1783,11 +1927,45 @@ function ItineraryResult({
       ) : null}
 
       {activeTab === "raw" ? (
-        <pre id="trip-panel-raw" role="tabpanel" aria-labelledby="trip-tab-raw" className="max-h-[720px] overflow-auto whitespace-pre-wrap p-5 font-barlow text-[15px] leading-7 text-white/82 sm:p-7">
-          {itinerary}
-        </pre>
+        <SourcePanel itinerary={itinerary} />
       ) : null}
     </div>
+  );
+}
+
+function SourcePanel({ itinerary }: { itinerary: string }) {
+  const [copied, setCopied] = useState(false);
+  const download = () => {
+    const url = URL.createObjectURL(new Blob([itinerary], { type: "text/markdown" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "wanderful-trip-notes.md";
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
+  if (!itinerary) {
+    return <EmptyResult icon={<Braces size={18}/>} title="Notes are still loading" text="Your plan notes will appear here."/>;
+  }
+
+  return (
+    <section id="trip-panel-raw" role="tabpanel" aria-labelledby="trip-tab-raw" className="source-panel p-4 sm:p-6">
+      <div className="source-sheet mx-auto max-w-4xl overflow-hidden rounded-[28px]">
+        <header className="flex flex-wrap items-center justify-between gap-3 border-b border-white/8 px-5 py-4 sm:px-7">
+          <div>
+            <p className="text-[10px] font-medium uppercase tracking-[.17em] text-[#72d7dc]">Plan notes</p>
+            <p className="mt-1 text-sm text-white/45">{itinerary.trim().split(/\s+/).length} words</p>
+          </div>
+          <div className="flex gap-2">
+            <button type="button" onClick={() => { void navigator.clipboard.writeText(itinerary); setCopied(true); window.setTimeout(() => setCopied(false), 1500); }} className="source-action"><Copy size={14}/>{copied ? "Copied" : "Copy"}</button>
+            <button type="button" onClick={download} className="source-action"><Download size={14}/>Save</button>
+          </div>
+        </header>
+        <article className="itinerary-markdown max-h-[720px] overflow-auto px-5 py-6 sm:px-8 sm:py-8">
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ a: ({ children, href }) => <a href={href} target="_blank" rel="noreferrer">{children}<ExternalLink size={11} className="ml-1 inline"/></a> }}>{itinerary}</ReactMarkdown>
+        </article>
+      </div>
+    </section>
   );
 }
 
@@ -1870,25 +2048,17 @@ function HotelMapPanel({
         <div className="rounded-[28px] border border-[#3fb6c4]/12 bg-[radial-gradient(circle_at_20%_0%,rgba(63,182,196,0.16),transparent_34%),rgba(0,0,0,0.68)] p-5 shadow-[0_22px_70px_rgba(0,0,0,0.28)]">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-white/50">Stay Finder</p>
-              <h4 className="mt-1 text-2xl font-medium tracking-[-0.04em] text-white">Compare your base</h4>
-              <p className="mt-2 text-sm leading-relaxed text-white/62">
-                Pick a hotel to preview where it sits on the map. The AI itinerary remains unchanged for now.
-              </p>
+              <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-[#72d7dc]">Stays</p>
+              <h4 className="mt-1 text-2xl font-medium tracking-[-0.04em] text-white">Choose your base</h4>
             </div>
             <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-[#3fb6c4] text-[#06181a] shadow-[0_0_38px_rgba(63,182,196,0.18)]">
               <Building2 size={20} />
             </div>
           </div>
-          <div className="mt-4 grid grid-cols-3 gap-2">
-            <StatPill label="Options" value={String(hotels.length)} />
-            <StatPill label="Mapped" value={String(hotelsWithCoordinates.length)} />
-            <StatPill label="Selected" value={selectedHotel?.nightly_rate || selectedHotel?.hotel_class || "Ready"} />
-          </div>
-          <div className="mt-5 rounded-[22px] border border-[#3fb6c4]/10 bg-[#0e1518]/35 p-4">
+          <div className="mt-4 rounded-[22px] border border-[#3fb6c4]/10 bg-[#0e1518]/35 p-4">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/42">Nightly Price Filter</p>
+                <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/42">Up to per night</p>
                 <p className="mt-1 text-lg font-medium text-white">{form.currency_code || "USD"} {nightlyBudget}</p>
               </div>
               <button
@@ -1937,9 +2107,9 @@ function HotelMapPanel({
             role="button"
             tabIndex={0}
             style={{ animationDelay: `${Math.min(hotelIndex, 8) * 45}ms` }}
-            className={`hotel-option-card card-hover card-enter group w-full cursor-pointer rounded-[26px] border p-4 text-left focus:outline-none focus:ring-2 focus:ring-[#3fb6c4]/30 ${
+            className={`hotel-option-card stay-card card-hover card-enter group w-full cursor-pointer rounded-[26px] border p-4 text-left focus:outline-none focus:ring-2 focus:ring-[#3fb6c4]/30 ${
               selectedHotel?.id === hotel.id
-                ? "border-[#3fb6c4]/60 bg-[#3fb6c4]/[0.16]"
+                ? "stay-card-selected border-[#3fb6c4]/60 bg-[#3fb6c4]/[0.16]"
                 : "border-[#3fb6c4]/12 bg-[#0e1518]/58 hover:border-[#3fb6c4]/28 hover:bg-[#3fb6c4]/[0.08]"
             }`}
           >
@@ -1948,56 +2118,44 @@ function HotelMapPanel({
                 src={hotel.image_thumbnail}
                 alt={hotel.name}
                 loading="lazy"
-                className="mb-3 h-36 w-full rounded-2xl border border-[#3fb6c4]/10 object-cover"
+                className="mb-4 h-44 w-full rounded-[20px] border border-[#3fb6c4]/10 object-cover transition duration-500 group-hover:scale-[1.01]"
               />
             ) : null}
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/40">
-                  {hotel.rank ? `Rank #${hotel.rank}` : hotel.hotel_class || "Recommended stay"}
-                </p>
-                <p className="mt-1 text-lg font-medium leading-tight text-white">{hotel.name}</p>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#72d7dc]">{hotel.rank ? `Choice ${hotel.rank}` : hotel.hotel_class || "Stay"}</p>
+                <p className="mt-1 text-xl font-medium leading-tight text-white">{hotel.name}</p>
               </div>
               <div className="flex flex-col items-end gap-2">
-                {hotel.rank_score ? <span className="rounded-full bg-[#3fb6c4] px-2.5 py-1 text-[11px] font-semibold text-[#06181a]">{hotel.rank_score} match</span> : null}
-                {hotel.coordinates ? <span className="rounded-full border border-[#3fb6c4]/12 px-2.5 py-1 text-[11px] text-white/62">Mapped</span> : null}
+                {hotel.nightly_rate ? <span className="text-lg font-semibold text-white">{hotel.nightly_rate}<span className="ml-1 text-[10px] font-normal uppercase text-white/35">night</span></span> : null}
+                {hotel.rank_score ? <span className="rounded-full bg-[#3fb6c4] px-2.5 py-1 text-[11px] font-semibold text-[#06181a]">{hotel.rank_score}% fit</span> : null}
               </div>
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
-              {hotel.nightly_rate ? <HotelMetric label="Night" value={hotel.nightly_rate} /> : null}
               {hotel.rating ? <HotelMetric label="Rating" value={`${hotel.rating}${hotel.reviews ? ` (${hotel.reviews})` : ""}`} /> : null}
               {hotel.estimated_total ? <HotelMetric label="Est. total" value={`${hotel.currency || ""} ${hotel.estimated_total}`} /> : null}
+              {hotel.coordinates ? <HotelMetric label="Map" value="Ready" /> : null}
             </div>
-            {hotel.description ? <p className="mt-3 line-clamp-3 text-sm leading-relaxed text-white/58">{hotel.description}</p> : null}
             {hotel.amenities?.length ? (
               <div className="mt-3 flex flex-wrap gap-1.5">
-                {hotel.amenities.slice(0, 8).map((amenity) => (
+                {hotel.amenities.slice(0, 4).map((amenity) => (
                   <span key={amenity} className="rounded-full border border-[#3fb6c4]/10 bg-[#0e1518]/20 px-2.5 py-1 text-[11px] text-white/62">
                     {amenity}
                   </span>
                 ))}
               </div>
             ) : null}
-            {hotel.rank_reasons?.length ? (
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                {hotel.rank_reasons.map((reason) => (
-                  <span key={reason} className="rounded-full border border-emerald-200/12 bg-emerald-200/[0.07] px-2.5 py-1 text-[11px] text-emerald-50/70">
-                    {reason}
-                  </span>
-                ))}
-              </div>
-            ) : null}
-            <button
+            <div className="mt-4 flex flex-wrap gap-2"><button
               type="button"
               onClick={(event) => {
                 event.stopPropagation();
                 onLockHotel(lockedHotelId === hotel.id ? "" : hotel.id);
               }}
-              className={`mt-4 rounded-full px-3 py-1.5 text-sm transition ${
+              className={`rounded-full px-3 py-1.5 text-sm transition ${
                 lockedHotelId === hotel.id ? "bg-[#3fb6c4] text-[#06181a]" : "border border-[#3fb6c4]/12 bg-[#3fb6c4]/[0.06] text-white/72 hover:bg-[#3fb6c4]/12"
               }`}
             >
-              {lockedHotelId === hotel.id ? "Locked selection" : "Lock this hotel"}
+              {lockedHotelId === hotel.id ? "Selected" : "Choose stay"}
             </button>
             {hotel.link ? (
               <a
@@ -2005,11 +2163,12 @@ function HotelMapPanel({
                 target="_blank"
                 rel="noreferrer"
                 onClick={(event) => event.stopPropagation()}
-                className="mt-4 inline-flex items-center gap-1.5 rounded-full border border-[#3fb6c4]/12 bg-[#3fb6c4]/[0.08] px-3 py-1.5 text-sm text-white/78 transition hover:bg-[#3fb6c4] hover:text-[#06181a]"
+                className="inline-flex items-center gap-1.5 rounded-full border border-[#3fb6c4]/12 bg-[#3fb6c4]/[0.08] px-3 py-1.5 text-sm text-white/78 transition hover:bg-[#3fb6c4] hover:text-[#06181a]"
               >
                 View hotel <ExternalLink size={12} />
               </a>
             ) : null}
+            </div>
           </article>
         ))}
       </div>
@@ -2018,8 +2177,8 @@ function HotelMapPanel({
         <div className="pointer-events-none absolute inset-x-0 top-0 z-[500] h-28 bg-gradient-to-b from-black/70 to-transparent" />
         <div className="pointer-events-none absolute left-4 right-4 top-4 z-[501] flex flex-wrap items-start justify-between gap-3">
           <div className="rounded-2xl border border-[#3fb6c4]/12 bg-[#0e1518]/72 px-4 py-3 backdrop-blur-md">
-            <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/50">OpenStreetMap</p>
-            <p className="mt-1 text-sm font-medium text-white">{hotelsWithCoordinates.length} mapped option{hotelsWithCoordinates.length === 1 ? "" : "s"}</p>
+            <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/50">Map</p>
+            <p className="mt-1 text-sm font-medium text-white">{hotelsWithCoordinates.length} stay{hotelsWithCoordinates.length === 1 ? "" : "s"}</p>
           </div>
           {selectedHotel ? (
             <div className="max-w-[320px] rounded-2xl border border-[#3fb6c4]/12 bg-[#0e1518]/72 px-4 py-3 text-right backdrop-blur-md">
@@ -2241,23 +2400,19 @@ function FlightOptionsPanel({
         <div className="rounded-[28px] border border-[#3fb6c4]/12 bg-[radial-gradient(circle_at_12%_0%,rgba(63,182,196,0.16),transparent_36%),rgba(0,0,0,0.68)] p-5 shadow-[0_22px_70px_rgba(0,0,0,0.28)]">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
-              <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-white/50">Flight Board</p>
+              <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-[#72d7dc]">Flights</p>
               <h4 className="mt-1 text-2xl font-medium tracking-[-0.04em] text-white">
                 {flightSearch.origin || "Origin"} to {flightSearch.destination || "Destination"}
               </h4>
-              <p className="mt-2 text-sm leading-relaxed text-white/62">
-                Compare available routes, continue to provider booking options, or retry nearby dates and airports without rebuilding the whole trip.
-              </p>
             </div>
             <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-[#3fb6c4] text-[#06181a] shadow-[0_0_38px_rgba(63,182,196,0.18)]">
               <Plane size={20} />
             </div>
           </div>
-          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div className="mt-4 grid grid-cols-3 gap-2">
             <StatPill label="Options" value={String(currentFlights.length)} />
             <StatPill label="Depart" value={formatDate(flightSearch.start_date)} />
             <StatPill label="Return" value={formatDate(flightSearch.end_date)} />
-            <StatPill label="Recovery" value={currentRecovery.length ? "Available" : "Clear"} />
           </div>
           {currentPriceInsights?.typical_price_range ? (
             <p className="mt-3 text-xs text-white/50">
@@ -2284,18 +2439,18 @@ function FlightOptionsPanel({
               role="button"
               tabIndex={0}
               style={{ animationDelay: `${Math.min(flightIndex, 8) * 45}ms` }}
-              className="flight-option-card card-hover card-enter block w-full cursor-pointer rounded-[28px] border border-[#3fb6c4]/12 bg-[#0e1518]/70 p-5 text-left shadow-[0_20px_70px_rgba(0,0,0,0.28)] hover:border-[#3fb6c4]/28 focus:outline-none focus:ring-2 focus:ring-[#3fb6c4]/30"
+              className="flight-option-card flight-ticket card-hover card-enter block w-full cursor-pointer overflow-hidden rounded-[28px] border border-[#3fb6c4]/12 bg-[#0e1518]/70 p-5 text-left shadow-[0_20px_70px_rgba(0,0,0,0.28)] hover:border-[#3fb6c4]/28 focus:outline-none focus:ring-2 focus:ring-[#3fb6c4]/30"
             >
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/40">
-                    {flight.rank ? `Rank #${flight.rank}` : `Option ${flightIndex + 1}`}
+                    {flight.rank ? `Choice ${flight.rank}` : `Flight ${flightIndex + 1}`}
                   </p>
                   <p className="mt-1 text-3xl font-medium tracking-[-0.05em] text-white">{formatFlightPrice(flight)}</p>
                   <div className="mt-2 flex flex-wrap gap-2 text-xs text-white/62">
                     <span className="rounded-full border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.07] px-3 py-1.5">{formatFlightDuration(flight.total_duration_minutes)}</span>
                     <span className="rounded-full border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.07] px-3 py-1.5">
-                      {flight.has_return_details ? "Round-trip details found" : "Return details may be incomplete"}
+                      {flight.has_return_details ? "Round trip" : "Outbound shown"}
                     </span>
                     <span className="rounded-full border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.07] px-3 py-1.5">{getFlightAirlines(flight)}</span>
                     {flight.rank_score ? <span className="rounded-full bg-[#3fb6c4] px-3 py-1.5 font-semibold text-[#06181a]">{flight.rank_score} match</span> : null}
@@ -2303,8 +2458,8 @@ function FlightOptionsPanel({
                 </div>
               </div>
 
-              <div className="mt-5 space-y-3">
-                {(flight.segments || []).map((segment, index) => {
+              <div className="mt-5 space-y-2">
+                {(flight.segments || []).slice(0, 2).map((segment, index) => {
                   const segments = flight.segments || [];
                   const layover = flight.layovers?.[index];
                   const isLast = index === segments.length - 1;
@@ -2317,12 +2472,11 @@ function FlightOptionsPanel({
                           </div>
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-2">
-                              <p className="font-medium text-white">{segment.airline || "Airline"}</p>
+                              <p className="font-medium text-white">{segment.from || "?"} <span className="mx-1 text-[#72d7dc]">→</span> {segment.to || "?"}</p>
                               {segment.flight_number ? <span className="rounded-full bg-[#0e1518]/35 px-2 py-0.5 text-[11px] text-white/48">{segment.flight_number}</span> : null}
                             </div>
                             <p className="mt-1 text-sm text-white/54">
-                              {segment.from || "?"} to {segment.to || "?"} - {segment.depart_at || "departure TBD"}
-                              {segment.arrive_at ? ` to ${segment.arrive_at}` : ""}
+                              {formatFlightDateTime(segment.depart_at)}{segment.arrive_at ? ` – ${formatFlightDateTime(segment.arrive_at)}` : ""} · {segment.airline || "Airline"}
                             </p>
                           </div>
                           <p className="hidden rounded-full border border-[#3fb6c4]/10 bg-[#0e1518]/30 px-3 py-1 text-xs text-white/52 sm:block">
@@ -2344,23 +2498,8 @@ function FlightOptionsPanel({
                   );
                 })}
               </div>
-              {flight.rank_reasons?.length ? (
-                <div className="mt-4 flex flex-wrap gap-1.5">
-                  {flight.rank_reasons.map((reason) => (
-                    <span key={reason} className="rounded-full border border-emerald-200/12 bg-emerald-200/[0.07] px-2.5 py-1 text-[11px] text-emerald-50/70">
-                      {reason}
-                    </span>
-                  ))}
-                </div>
-              ) : null}
               <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[#3fb6c4]/10 pt-4">
-                <p className="max-w-2xl text-xs leading-relaxed text-white/42">
-                  {flight.carbon_emissions?.difference_percent != null
-                    ? `Estimated emissions ${Math.abs(flight.carbon_emissions.difference_percent)}% ${
-                        flight.carbon_emissions.difference_percent < 0 ? "below" : "above"
-                      } typical for this route.`
-                    : "Provider result normalized from SerpAPI Google Flights."}
-                </p>
+                {flight.carbon_emissions?.difference_percent != null ? <p className="text-xs text-white/42">CO₂ {Math.abs(flight.carbon_emissions.difference_percent)}% {flight.carbon_emissions.difference_percent < 0 ? "below" : "above"} typical</p> : <span/>}
                 <a
                   href={buildGoogleFlightsUrl(flightSearch)}
                   target="_blank"
@@ -2380,19 +2519,16 @@ function FlightOptionsPanel({
                     lockedFlightId === flight.id ? "bg-[#3fb6c4] text-[#06181a]" : "border border-[#3fb6c4]/12 bg-[#3fb6c4]/[0.08] text-white/78 hover:bg-[#3fb6c4] hover:text-[#06181a]"
                   }`}
                 >
-                  {lockedFlightId === flight.id ? "Locked selection" : "Lock this flight"}
+                  {lockedFlightId === flight.id ? "Selected" : "Choose flight"}
                 </button>
               </div>
-              <p className="mt-4 text-[11px] font-medium uppercase tracking-[0.14em] text-white/40 transition group-hover:text-white/70">
-                Click card for booking details
-              </p>
             </article>
           ))
         ) : (
           <EmptyResult
             icon={<Plane size={18} />}
             title="No flight options returned"
-            text="Use the recovery suggestions or type a sentence to try nearby dates, nearby airports, or a different city."
+            text="Try nearby dates or airports."
           />
         )}
       </div>
@@ -2437,9 +2573,6 @@ function FlightOptionsPanel({
             {loading ? <Loader2 className="animate-spin" size={15} /> : <Search size={15} />}
             Check these flights
           </button>
-          <p className="mt-3 rounded-2xl border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.055] px-3 py-2 text-xs leading-relaxed text-white/56">
-            City names are converted to likely airport codes automatically, for example Los Angeles to LAX and San Jose to SJC.
-          </p>
         </div>
 
         <div className="rounded-[26px] border border-[#3fb6c4]/12 bg-[#0e1518]/68 p-4 shadow-[0_18px_55px_rgba(0,0,0,0.2)]">
@@ -2448,7 +2581,7 @@ function FlightOptionsPanel({
             value={instruction}
             onChange={(event) => setInstruction(event.target.value)}
             rows={4}
-            placeholder="Try leaving two days earlier, use SFO instead, or try nearby airports."
+            placeholder="Leave two days earlier or try a nearby airport."
             className="mt-3 w-full resize-none rounded-2xl border border-[#3fb6c4]/16 bg-[#0e1518]/68 p-3 text-sm text-white outline-none placeholder:text-white/42 focus:border-[#3fb6c4]/42"
           />
           <button
@@ -2533,7 +2666,7 @@ function FlightDetailModal({
 
   const loadBookingOptions = async () => {
     if (!activeFlight.booking_token) {
-      setBookingStatus("This flight result did not include a booking token. Open Google Flights to continue.");
+      setBookingStatus("Open Google Flights to continue.");
       return;
     }
     setLoadingBookings(true);
@@ -2554,8 +2687,8 @@ function FlightDetailModal({
       setBookingOptions(Array.isArray(payload.booking_options) ? payload.booking_options : []);
       setBookingStatus(
         payload.booking_options?.length
-          ? "Booking options loaded from SerpAPI."
-          : "SerpAPI did not return direct booking links for this token. Open Google Flights to continue."
+          ? "Booking options ready."
+          : "No direct booking links found. Open Google Flights to continue."
       );
     } catch (caught) {
       setBookingStatus(caught instanceof Error ? caught.message : "Could not load booking options.");
@@ -2566,7 +2699,7 @@ function FlightDetailModal({
 
   const loadReturnOptions = async () => {
     if (!activeFlight.departure_token) {
-      setReturnStatus("This flight result did not include a departure token. Open Google Flights to choose the return leg.");
+      setReturnStatus("Open Google Flights to choose the return.");
       return;
     }
     setLoadingReturns(true);
@@ -2590,8 +2723,8 @@ function FlightDetailModal({
       setReturnOptions(options);
       setReturnStatus(
         options.length
-          ? "Choose a return option below, then load booking options."
-          : "SerpAPI did not return return-flight choices for this token. Open Google Flights to continue."
+          ? "Choose a return below."
+          : "No return choices found. Open Google Flights to continue."
       );
       if (options.length === 1) {
         setActiveFlight(mergeFlightLegs(flight, options[0]));
@@ -2636,10 +2769,8 @@ function FlightDetailModal({
 
         {!activeFlight.has_return_details ? (
           <div className="mb-5 rounded-[24px] border border-amber-200/18 bg-amber-200/[0.08] p-4">
-            <p className="text-sm font-medium text-white">Return details may be incomplete</p>
-            <p className="mt-2 text-sm leading-relaxed text-white/62">
-              Google Flights sometimes returns the outbound leg first and provides a departure token for selecting return flights. This app keeps the result visible, but final verification should happen in Google Flights or a booking provider before purchase.
-            </p>
+            <p className="text-sm font-medium text-white">Return not selected</p>
+            <p className="mt-1 text-sm text-white/62">Choose a return or continue on Google Flights.</p>
           </div>
         ) : null}
 
@@ -2792,6 +2923,8 @@ function SavedTripsDrawer({
   onOpenJournal,
   onOpenGuidebook,
   onOpenIntelligence,
+  onOpenExpenses,
+  onOpenVault,
   onToggleShare,
 }: {
   open: boolean;
@@ -2804,6 +2937,8 @@ function SavedTripsDrawer({
   onOpenJournal: (trip: SavedTrip) => void;
   onOpenGuidebook: (trip: SavedTrip) => void;
   onOpenIntelligence: (trip: SavedTrip) => void;
+  onOpenExpenses: (trip: SavedTrip) => void;
+  onOpenVault: (trip: SavedTrip) => void;
   onToggleShare: (tripId: string) => void;
 }) {
   useEscapeToClose(open, onClose);
@@ -2880,25 +3015,31 @@ function SavedTripsDrawer({
                   </button>
                 </div>
                 {accountMode ? (
-                  <div className="mt-2 flex gap-2">
+                  <div className="mt-3 grid grid-cols-2 gap-2">
                     <button
                       type="button"
                       onClick={() => onOpenIntelligence(trip)}
-                      className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-full border border-[#3fb6c4]/20 bg-[#3fb6c4]/10 px-3 py-2 text-xs text-white/78 hover:bg-[#3fb6c4]/16"
+                      className="inline-flex items-center justify-center gap-1.5 rounded-2xl border border-[#3fb6c4]/20 bg-[#3fb6c4]/10 px-3 py-2.5 text-xs text-white/78 hover:bg-[#3fb6c4]/16"
                     >
                       <Sparkles size={13} /> Trip Health
+                    </button>
+                    <button type="button" onClick={() => onOpenExpenses(trip)} className="inline-flex items-center justify-center gap-1.5 rounded-2xl border border-[#72d7dc]/20 bg-[#72d7dc]/10 px-3 py-2.5 text-xs text-white/78 hover:bg-[#72d7dc]/16">
+                      <ReceiptText size={13}/> Expenses
+                    </button>
+                    <button type="button" onClick={() => onOpenVault(trip)} className="inline-flex items-center justify-center gap-1.5 rounded-2xl border border-[#f1bf75]/18 bg-[#f1bf75]/[.07] px-3 py-2.5 text-xs text-[#f1d198] hover:bg-[#f1bf75]/12">
+                      <FolderLock size={13}/> Document vault
                     </button>
                     <button
                       type="button"
                       onClick={() => onOpenJournal(trip)}
-                      className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-full border border-[#3fb6c4]/12 bg-[#0e1518]/35 px-3 py-2 text-xs text-white/68 hover:bg-[#3fb6c4]/10"
+                      className="inline-flex items-center justify-center gap-1.5 rounded-2xl border border-[#3fb6c4]/12 bg-[#0e1518]/35 px-3 py-2.5 text-xs text-white/68 hover:bg-[#3fb6c4]/10"
                     >
                       <BookOpen size={13} /> Journal
                     </button>
                     <button
                       type="button"
                       onClick={() => onOpenGuidebook(trip)}
-                      className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-full border border-[#3fb6c4]/12 bg-[#0e1518]/35 px-3 py-2 text-xs text-white/68 hover:bg-[#3fb6c4]/10"
+                      className="col-span-2 inline-flex items-center justify-center gap-1.5 rounded-2xl border border-[#3fb6c4]/12 bg-[#0e1518]/35 px-3 py-2.5 text-xs text-white/68 hover:bg-[#3fb6c4]/10"
                     >
                       <Compass size={13} /> Guidebook
                     </button>
@@ -3021,7 +3162,6 @@ function TripEssentials({ itinerary }: { itinerary: StructuredItineraryData }) {
                 <div key={`${item.category}-${index}`} className="flex items-start justify-between gap-3 text-sm">
                   <div>
                     <p className="font-medium text-white/85">{item.category}</p>
-                    {item.note ? <p className="text-[12px] text-white/50">{item.note}</p> : null}
                   </div>
                   <p className="shrink-0 font-medium text-white/85">
                     {currency} {(item.amount || 0).toFixed(2)}
@@ -3039,7 +3179,7 @@ function TripEssentials({ itinerary }: { itinerary: StructuredItineraryData }) {
               <span className="text-[10px] font-medium uppercase tracking-[0.15em]">Packing list</span>
             </div>
             <ul className="space-y-1.5 text-sm text-white/76">
-              {packingList.map((item, index) => (
+              {packingList.slice(0, 5).map((item, index) => (
                 <li key={`packing-${index}`}>- {item}</li>
               ))}
             </ul>
@@ -3053,7 +3193,7 @@ function TripEssentials({ itinerary }: { itinerary: StructuredItineraryData }) {
               <span className="text-[10px] font-medium uppercase tracking-[0.15em]">Logistics</span>
             </div>
             <ul className="space-y-1.5 text-sm text-white/76">
-              {logistics.map((item, index) => (
+              {logistics.slice(0, 4).map((item, index) => (
                 <li key={`logistics-${index}`}>- {item}</li>
               ))}
             </ul>
@@ -3067,7 +3207,7 @@ function TripEssentials({ itinerary }: { itinerary: StructuredItineraryData }) {
               <span className="text-[10px] font-medium uppercase tracking-[0.15em]">Risks and warnings</span>
             </div>
             <ul className="space-y-1.5 text-sm text-amber-100/80">
-              {[...risks, ...warnings].map((item, index) => (
+              {[...risks, ...warnings].slice(0, 4).map((item, index) => (
                 <li key={`risk-${index}`}>- {item}</li>
               ))}
             </ul>
@@ -3117,9 +3257,7 @@ function DayTimeline({
           </div>
           <CalendarDays className="text-white/50" size={20} />
         </div>
-        <p className="text-sm leading-relaxed text-white/58">
-          The generated itinerary did not expose clear Day 1 / Day 2 sections, so the full itinerary is shown below.
-        </p>
+        <p className="text-sm text-white/58">Open Source to view the full plan.</p>
       </div>
     );
   }
@@ -3128,13 +3266,11 @@ function DayTimeline({
     <section className="rounded-[30px] border border-[#3fb6c4]/10 bg-[linear-gradient(135deg,rgba(63,182,196,0.09),rgba(63,182,196,0.025))] p-5 shadow-[0_24px_90px_rgba(0,0,0,0.28)]">
       <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/45">Day-by-day flow</p>
-          <h4 className="mt-1 text-2xl font-medium tracking-[-0.035em] text-white sm:text-3xl">
-            Your trip at a glance
-          </h4>
+          <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-[#72d7dc]">Journey</p>
+          <h4 className="mt-1 text-2xl font-medium tracking-[-0.035em] text-white sm:text-3xl">Day by day</h4>
         </div>
         <div className="rounded-full border border-[#3fb6c4]/10 bg-[#0e1518]/35 px-3 py-1.5 text-[11px] font-medium text-white/62">
-          Swipe horizontally
+          Swipe
         </div>
       </div>
 
@@ -3162,17 +3298,15 @@ function DayTimeline({
               </div>
             </div>
 
-            {day.summary ? <p className="mb-4 line-clamp-3 text-sm leading-relaxed text-white/58">{day.summary}</p> : null}
-
             <div className="space-y-2">
-              {day.bullets.slice(0, 4).map((bullet, bulletIndex) => (
-                <div key={`${day.day}-bullet-${bulletIndex}`} className="rounded-2xl border border-[#3fb6c4]/10 bg-[#0e1518]/44 px-3 py-2 text-sm leading-relaxed text-white/76">
+              {day.bullets.slice(0, 3).map((bullet, bulletIndex) => (
+                <div key={`${day.day}-bullet-${bulletIndex}`} className="rounded-2xl border border-[#3fb6c4]/10 bg-[#0e1518]/44 px-3 py-2.5 text-sm text-white/76">
                   {bullet}
                 </div>
               ))}
             </div>
             <p className="mt-4 text-[11px] font-medium uppercase tracking-[0.14em] text-white/40 transition group-hover:text-white/70">
-              Click for details
+              Open day →
             </p>
           </button>
         ))}
@@ -3232,7 +3366,6 @@ function DayDetailModal({
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/45">{day.day}</p>
             <h3 className="mt-2 text-3xl font-medium leading-tight tracking-[-0.04em] text-white sm:text-5xl">{day.title}</h3>
-            {day.summary ? <p className="mt-4 max-w-2xl text-[15px] leading-relaxed text-white/62">{day.summary}</p> : null}
           </div>
           <div className="flex shrink-0 items-center gap-2">
             {structuredDay && canRegenerateDay ? (
@@ -3266,7 +3399,7 @@ function DayDetailModal({
           />
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
-            {(day.details.length ? day.details : day.bullets).slice(0, 12).map((detail, index) => (
+            {(day.details.length ? day.details : day.bullets).slice(0, 6).map((detail, index) => (
               <div key={`${day.day}-detail-${index}`} className="rounded-[22px] border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.055] p-4">
                 <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/38">Stop {index + 1}</p>
                 <p className="mt-2 text-sm leading-relaxed text-white/76">{detail}</p>
@@ -3608,10 +3741,9 @@ function extractDayPlans(markdown: string, fallbackStartDate: string, fallbackEn
 
 function structuredDayToDayPlan(day: StructuredDayData): DayPlan {
   const activityDetails = (day.activities || []).map((activity) => {
-    const time = activity.time ? `${activity.time} - ` : "";
-    const location = activity.location ? ` @ ${activity.location}` : "";
-    const cost = activity.estimated_cost ? ` (${activity.estimated_cost.toFixed(2)})` : "";
-    return `${time}${activity.title}${location}${cost}: ${activity.description || ""}`.trim();
+    const time = activity.time ? `${activity.time} · ` : "";
+    const location = activity.location ? ` — ${activity.location}` : "";
+    return `${time}${activity.title}${location}`.trim();
   });
   const operationalDetails = [
     day.weather_note ? `Weather: ${day.weather_note}` : "",
@@ -3621,8 +3753,8 @@ function structuredDayToDayPlan(day: StructuredDayData): DayPlan {
   return {
     day: `Day ${day.day_number}`,
     title: day.title || formatDate(day.date),
-    summary: day.summary || activityDetails[0] || "",
-    bullets: activityDetails.slice(0, 5),
+    summary: "",
+    bullets: activityDetails.slice(0, 3),
     details: [...activityDetails, ...operationalDetails],
   };
 }
@@ -3802,6 +3934,22 @@ function formatDate(value: string) {
     return value;
   }
   return new Intl.DateTimeFormat("en", { month: "short", day: "numeric", year: "numeric" }).format(date);
+}
+
+function formatFlightDateTime(value?: string | null) {
+  if (!value) {
+    return "Time TBD";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return new Intl.DateTimeFormat("en", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
 }
 
 function formatSavedAt(value: string) {
