@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -90,6 +90,7 @@ def delete_user_account(user_id: int) -> bool:
         user = db.get(User, user_id)
         if not user:
             return False
+        db.execute(update(User).where(User.approved_by == user_id).values(approved_by=None))
         db.delete(user)
         return True
 
@@ -176,7 +177,7 @@ def get_saved_trip(user_id: int, trip_id: int) -> dict[str, Any] | None:
         return {**_trip_dict(trip, share_token=share.token if share else None), "selections": _selection_dicts(db, trip.id)}
 
 
-def update_trip_constraints(user_id: int, trip_id: int, constraints: dict[str, Any]) -> dict[str, Any] | None:
+def update_trip_constraints(user_id: int, trip_id: int, constraints: dict[str, Any], expected_revision=None) -> dict[str, Any] | None:
     normalized = {
         str(key)[:120]: str(value)
         for key, value in constraints.items()
@@ -186,25 +187,39 @@ def update_trip_constraints(user_id: int, trip_id: int, constraints: dict[str, A
         trip = db.scalar(select(SavedTrip).where(SavedTrip.id == trip_id, SavedTrip.user_id == user_id))
         if not trip:
             return None
+        if expected_revision is not None:
+            from trip_mutations import check_revision
+            check_revision(trip, expected_revision)
         trip.constraints_json = normalized
     return get_saved_trip(user_id, trip_id)
 
 
-def apply_trip_adjustment(user_id: int, trip_id: int, structured_itinerary: dict[str, Any], live_state: dict[str, Any]) -> dict[str, Any] | None:
+def apply_trip_adjustment(user_id: int, trip_id: int, structured_itinerary: dict[str, Any], live_state: dict[str, Any], expected_revision=None) -> dict[str, Any] | None:
     with session_scope() as db:
         trip = db.scalar(select(SavedTrip).where(SavedTrip.id == trip_id, SavedTrip.user_id == user_id))
         if not trip:
             return None
+        if expected_revision is not None:
+            from trip_mutations import check_revision
+            check_revision(trip, expected_revision)
+        from models import TripHistory
+        db.add(TripHistory(trip_id=trip.id, revision=trip.revision, payload={**_trip_dict(trip), "selections": _selection_dicts(db, trip.id)}))
         trip.structured_json = structured_itinerary
         trip.live_state_json = live_state
     return get_saved_trip(user_id, trip_id)
 
 
-def update_trip_budget(user_id: int, trip_id: int, budget_state: dict[str, Any]) -> dict[str, Any] | None:
+def update_trip_budget(user_id: int, trip_id: int, budget_state: dict[str, Any], expected_revision=None) -> dict[str, Any] | None:
     with session_scope() as db:
         trip = db.scalar(select(SavedTrip).where(SavedTrip.id == trip_id, SavedTrip.user_id == user_id))
         if not trip:
             return None
+        if expected_revision is not None:
+            from trip_mutations import check_revision
+            check_revision(trip, expected_revision)
+        from models import TripRecord
+        if db.get(TripRecord, (trip_id, "legacy-import")):
+            raise ValueError("This trip uses individual ledger records. Refresh the app to edit expenses safely.")
         trip.budget_state_json = budget_state
     return get_saved_trip(user_id, trip_id)
 
@@ -268,11 +283,17 @@ def apply_disruption_scenario(
     structured_itinerary: dict[str, Any],
     live_state: dict[str, Any],
     history_entry: dict[str, Any],
+    expected_revision=None,
 ) -> dict[str, Any] | None:
     with session_scope() as db:
         trip = db.scalar(select(SavedTrip).where(SavedTrip.id == trip_id, SavedTrip.user_id == user_id))
         if not trip:
             return None
+        if expected_revision is not None:
+            from trip_mutations import check_revision
+            check_revision(trip, expected_revision)
+        from models import TripHistory
+        db.add(TripHistory(trip_id=trip.id, revision=trip.revision, payload={**_trip_dict(trip), "selections": _selection_dicts(db, trip.id)}))
         trip.structured_json = structured_itinerary
         trip.live_state_json = live_state
         history = list(trip.disruption_history_json or [])

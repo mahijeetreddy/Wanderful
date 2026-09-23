@@ -1,4 +1,5 @@
 import { QueryClient } from "@tanstack/react-query";
+import { clearOfflinePacks } from "../offline/storage";
 
 export const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 30_000, refetchOnWindowFocus: false } } });
 let epoch = 0;
@@ -9,6 +10,7 @@ export function registerRequest(controller: AbortController) {
   return () => requests.delete(controller);
 }
 export function invalidateSession(broadcast = false) {
+  void clearOfflinePacks().catch(() => undefined);
   epoch += 1;
   for (const controller of requests) controller.abort();
   requests.clear();

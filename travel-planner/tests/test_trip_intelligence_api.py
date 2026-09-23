@@ -47,7 +47,7 @@ def test_trip_intelligence_constraint_preview_apply_and_memory(client):
 
     constrained = client.put(
         f"/api/trips/{trip_id}/constraints",
-        json={"constraints": {"day-1-activity-1": "locked", "bad": "unsupported"}},
+        json={"expected_revision": 1, "constraints": {"day-1-activity-1": "locked", "bad": "unsupported"}},
     )
     assert constrained.status_code == 200
     assert constrained.get_json()["trip"]["constraints"] == {"day-1-activity-1": "locked"}
@@ -61,7 +61,7 @@ def test_trip_intelligence_constraint_preview_apply_and_memory(client):
 
     applied = client.post(
         f"/api/trips/{trip_id}/live-adjust",
-        json={"event": "rain", "day_number": 1, "apply": True},
+        json={"event": "rain", "day_number": 1, "apply": True, "expected_revision": constrained.get_json()["trip"]["revision"]},
     )
     assert applied.status_code == 200
     assert applied.get_json()["trip"]["liveState"]["last_event"] == "rain"
@@ -107,7 +107,7 @@ def test_budget_offline_pack_and_disruption_workflow(client):
 
     budget = client.put(
         f"/api/trips/{trip_id}/budget",
-        json={"reserve_percent": 15, "expenses": [{"id": "meal", "label": "Lunch", "category": "Food", "amount": 32}]},
+        json={"expected_revision": 1, "reserve_percent": 15, "expenses": [{"id": "meal", "label": "Lunch", "category": "Food", "amount": 32}]},
     )
     assert budget.status_code == 200
     assert budget.get_json()["budget"]["actual"] == 32
@@ -127,7 +127,7 @@ def test_budget_offline_pack_and_disruption_workflow(client):
 
     applied = client.post(
         f"/api/trips/{trip_id}/disruptions",
-        json={"event": "running_late", "strategy": "balanced", "day_number": 1, "apply": True},
+        json={"event": "running_late", "strategy": "balanced", "day_number": 1, "apply": True, "expected_revision": budget.get_json()["trip"]["revision"]},
     )
     assert applied.status_code == 200
     assert applied.get_json()["trip"]["disruptionHistory"][0]["strategy"] == "balanced"

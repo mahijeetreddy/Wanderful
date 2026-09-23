@@ -2,13 +2,14 @@ import { useState } from "react";
 import type { SavedTrip, TripSelection } from "../../domain/travel";
 import { apiFetch, readApiJson } from "../../api/client";
 import { DecisionPreview, type Decision } from "./DecisionPreview";
+import { TripHistory } from "./TripHistory";
 
 export function BookingSelections({ trip, onUpdated }: { trip: SavedTrip; onUpdated: (trip: SavedTrip) => void }) {
-  return <details className="mt-3 rounded-2xl border border-amber-200/20 bg-amber-200/5 p-3 text-sm text-white/80">
+  return <><TripHistory trip={trip} onUpdated={onUpdated} /><details className="mt-3 rounded-2xl border border-amber-200/20 bg-amber-200/5 p-3 text-sm text-white/80">
     <summary className="min-h-11 cursor-pointer content-center text-amber-100">Selections & booking status</summary>
     <p className="my-2 text-xs text-white/65">Bookings are confirmed by you, not verified with providers. Record payments separately in Expenses.</p>
     {(["flights", "hotels"] as const).map((kind) => <BookingSelection key={`${kind}-${trip.savedAt}`} kind={kind} trip={trip} onUpdated={onUpdated} />)}
-  </details>;
+  </details></>;
 }
 
 function BookingSelection({ kind, trip, onUpdated }: { kind: TripSelection["kind"]; trip: SavedTrip; onUpdated: (trip: SavedTrip) => void }) {

@@ -28,6 +28,10 @@ services:
       DATABASE_URL: postgresql+psycopg://wanderful:wanderful@postgres:5432/wanderful
       REDIS_URL: redis://redis:6379/0
       PORT: 5052
+      VAULT_STORAGE_DIR: /var/lib/wanderful/vault
+      VAULT_VOLUME_MOUNT: /var/lib/wanderful/vault
+    volumes:
+      - travel_vault:/var/lib/wanderful/vault
     ports: ["5052:5052"]
     depends_on:
       postgres: { condition: service_healthy }
@@ -43,3 +47,5 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
+volumes:
+  travel_vault:

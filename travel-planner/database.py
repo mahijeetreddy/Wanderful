@@ -3,7 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import Iterator
 
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, inspect, text, event
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from config import settings
@@ -18,6 +18,10 @@ if settings.database_url.startswith("sqlite"):
     engine_kwargs["connect_args"] = {"check_same_thread": False}
 
 engine = create_engine(settings.database_url, **engine_kwargs)
+if settings.database_url.startswith("sqlite"):
+    @event.listens_for(engine, "connect")
+    def _enable_foreign_keys(connection, _record):
+        connection.execute("PRAGMA foreign_keys=ON")
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
 
 

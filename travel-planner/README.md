@@ -23,11 +23,11 @@ budget and interests, not generic suggestions.
 
 ## Status
 
-The product upgrade is currently in **Phase 2 (Flights and Stays)**. Phase 1's core
-selection and account-isolation journeys are verified. The main reopened workspace now
-updates the original trip with revision checking; stale drafts are retained for reconciliation.
-Phase 3 revision groundwork is implemented, while impact previews and Phases 4–5 remain
-pending. See [implementation status](docs/IMPLEMENTATION_STATUS.md)
+The product upgrade is in progress. Connected selection previews and an exact-money
+ledger are implemented, with operational reliability work underway. The main reopened
+workspace updates the original trip with revision checking; stale drafts are retained
+for reconciliation. Not all phase acceptance gates are complete. See
+[implementation status](docs/IMPLEMENTATION_STATUS.md)
 and the [product tour with screenshots](../README.md#product-tour).
 
 Implemented additions include independent provider status/retry, immutable server-owned
@@ -37,11 +37,14 @@ room-rate quotes. Missing room policies, taxes or totals are not invented. Selec
 user-recorded externally booked, and paid are distinct concepts; choosing an offer does
 not reserve or purchase it.
 
-The remaining work includes map/accessibility audits, connected decision previews,
-transactional revisions, exact commitment/payment accounting, durable vault storage,
-account-scoped IndexedDB offline packs, and opt-in weather monitoring. Existing budget,
-offline, expense and disruption tools below are the current versions, not completion of
-those planned reliability upgrades. Groups are owner-managed; disruptions are user-triggered.
+Selection previews show price/budget changes and timing conflicts before applying a
+change. Linked booking payments are not counted twice; group balances use exact minor
+units and individual revision-checked records. The vault supports a local persistent
+volume and non-destructive copy verification; see [vault operations](docs/VAULT_STORAGE.md).
+Remaining work includes complete map/accessibility audits, undo UI, account-scoped
+IndexedDB offline packs, monitoring, and evaluation benchmarks. Existing offline and
+disruption tools are not completion of those upgrades. Groups are owner-managed;
+disruptions remain user-triggered.
 
 Wanderful is in a controlled beta. New accounts require admin approval before
 planning is enabled. Prices and availability shown are time-sensitive results from

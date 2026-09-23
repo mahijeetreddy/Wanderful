@@ -6,7 +6,7 @@ import { MapContainer, Marker, Polyline, Popup, TileLayer, useMap } from "react-
 import { apiFetch, readApiJson } from "../../api/client";
 import type { Coordinates, StructuredActivityData, StructuredDayData } from "../../domain/travel";
 
-type RouteStop = { index: number; title: string; location: string; coordinates: Coordinates };
+type RouteStop = { index: number; title: string; location: string; coordinates: Coordinates; source_id?: string; source_url?: string };
 
 export function RouteMapPanel({ destination, days, mapCenter }: { destination: string; days: StructuredDayData[]; mapCenter: Coordinates | null }) {
   const [dayNumber, setDayNumber] = useState(days[0]?.day_number || 1);
@@ -14,7 +14,7 @@ export function RouteMapPanel({ destination, days, mapCenter }: { destination: s
   const [unresolved, setUnresolved] = useState(0);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
-  const cache = useRef(new Map<number, { stops: RouteStop[]; unresolved: number }>());
+  const cache = useRef(new Map<string, { stops: RouteStop[]; unresolved: number }>());
   const day = days.find((item) => item.day_number === dayNumber) || days[0];
   const activities = useMemo(() => (day?.activities || []).slice(0, 8), [day]);
 
@@ -23,7 +23,8 @@ export function RouteMapPanel({ destination, days, mapCenter }: { destination: s
       setStops([]);
       return;
     }
-    const cached = cache.current.get(day.day_number);
+    const cacheKey = JSON.stringify([destination, activities]);
+    const cached = cache.current.get(cacheKey);
     if (cached) {
       setStops(cached.stops);
       setUnresolved(cached.unresolved);
@@ -36,13 +37,14 @@ export function RouteMapPanel({ destination, days, mapCenter }: { destination: s
       coordinates: activity.coordinates,
     }] : []);
     if (embedded.length === activities.length) {
-      cache.current.set(day.day_number, { stops: embedded, unresolved: 0 });
+      cache.current.set(cacheKey, { stops: embedded, unresolved: 0 });
       setStops(embedded);
       setUnresolved(0);
       return;
     }
     const controller = new AbortController();
     setLoading(true);
+    setStops([]);
     setMessage("");
     void apiFetch("/api/route-map", {
       method: "POST",
@@ -53,7 +55,7 @@ export function RouteMapPanel({ destination, days, mapCenter }: { destination: s
       .then((response) => readApiJson<{ stops: RouteStop[]; unresolved: number }>(response))
       .then((payload) => {
         const result = { stops: payload.stops || [], unresolved: payload.unresolved || 0 };
-        cache.current.set(day.day_number, result);
+        cache.current.set(cacheKey, result);
         setStops(result.stops);
         setUnresolved(result.unresolved);
         if (!result.stops.length) setMessage("Map coordinates are unavailable. Open the route in Maps instead.");
@@ -75,7 +77,7 @@ export function RouteMapPanel({ destination, days, mapCenter }: { destination: s
       <div className="flex flex-wrap items-center justify-between gap-4 border-b border-white/8 px-5 py-5 sm:px-6">
         <div>
           <p className="text-[10px] font-semibold uppercase tracking-[.18em] text-[#72d7dc]">Route map</p>
-          <h4 className="mt-1 text-2xl font-medium tracking-[-.035em] text-white">See the day before you go.</h4>
+          <h4 className="mt-1 text-2xl font-medium tracking-[-.035em] text-white">See the day before you go.</h4><p className="mt-2 text-xs text-white/75">Straight-line guide, not walking or transit directions.</p>
         </div>
         <a href={mapsUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full border border-[#72d7dc]/20 bg-[#72d7dc]/10 px-4 py-2.5 text-sm text-white/80 hover:bg-[#72d7dc]/16">
           Open route <ExternalLink size={14} />
@@ -109,7 +111,7 @@ export function RouteMapPanel({ destination, days, mapCenter }: { destination: s
               <TileLayer attribution='&copy; OpenStreetMap contributors' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
               <Polyline positions={positions} pathOptions={{ color: "#72d7dc", weight: 4, opacity: 0.82, dashArray: "8 8" }} />
               {stops.map((stop, index) => (
-                <Marker key={`${stop.title}-${index}`} position={[stop.coordinates.lat, stop.coordinates.lng]} icon={numberedMarker(index + 1)}>
+                <Marker key={`${stop.title}-${index}`} position={[stop.coordinates.lat, stop.coordinates.lng]} icon={numberedMarker(stop.index + 1)}>
                   <Popup><strong>{stop.title}</strong><br />{stop.location}</Popup>
                 </Marker>
               ))}
@@ -124,7 +126,7 @@ export function RouteMapPanel({ destination, days, mapCenter }: { destination: s
 }
 
 function RouteStopRow({ activity, index, last }: { activity: StructuredActivityData; index: number; last: boolean }) {
-  return <div className="grid grid-cols-[34px_1fr] gap-3"><div className="flex flex-col items-center"><span className="grid h-8 w-8 place-items-center rounded-full border border-[#72d7dc]/28 bg-[#72d7dc]/12 text-xs font-semibold text-[#8de8eb]">{index + 1}</span>{!last ? <span className="my-1 h-full min-h-5 w-px bg-gradient-to-b from-[#72d7dc]/35 to-white/5"/> : null}</div><div className="pb-4"><div className="flex items-center gap-2 text-xs text-white/38"><span>{activity.time || activity.period || "Flexible"}</span>{index ? <><Footprints size={11}/><span>next stop</span></> : null}</div><p className="mt-1 font-medium text-white/88">{activity.title}</p><p className="mt-1 text-sm text-white/45">{activity.location || "Location pending"}</p></div></div>;
+  return <div className="grid grid-cols-[34px_1fr] gap-3"><div className="flex flex-col items-center"><span className="grid h-8 w-8 place-items-center rounded-full border border-[#72d7dc]/28 bg-[#72d7dc]/12 text-xs font-semibold text-[#8de8eb]">{index + 1}</span>{!last ? <span className="my-1 h-full min-h-5 w-px bg-gradient-to-b from-[#72d7dc]/35 to-white/5"/> : null}</div><div className="pb-4"><div className="flex items-center gap-2 text-xs text-white/38"><span>{activity.time || activity.period || "Flexible"}</span>{index ? <><Footprints size={11}/><span>next stop</span></> : null}</div><p className="mt-1 font-medium text-white/88">{activity.title}</p>{activity.schedule_conflict && <p className="mt-2 text-sm text-amber-100">{activity.schedule_conflict}</p>}<a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(activity.location || activity.title)}`} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center text-sm text-[#a9f1f1]">Find in Maps</a><p className="mt-1 text-sm text-white/45">{activity.location || "Location pending"}</p></div></div>;
 }
 
 function FitRoute({ positions }: { positions: [number, number][] }) {

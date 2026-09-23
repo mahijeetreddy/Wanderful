@@ -2,6 +2,8 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { AlertTriangle, Check, CloudDownload, Gauge, Heart, PlaneTakeoff, Plus, RefreshCw, ShieldCheck, Sparkles, Trash2, WalletCards, Wifi, WifiOff } from "lucide-react";
 
 import { apiFetch, readApiJson } from "../../api/client";
+import { ExactLedger } from "../expenses/ExactLedger";
+import { listOfflinePacks, offlineGeneration, removeOfflinePack, saveOfflinePack } from "../offline/storage";
 import type { BudgetExpense, BudgetGuardian, OfflineTripPack, RecommendationEvidence, SavedTrip, TripHealth } from "../../domain/travel";
 
 type Constraint = "locked" | "preferred" | "optional" | "avoid";
@@ -37,14 +39,13 @@ export function TripIntelligencePanel({ trip, onClose, onTripUpdated }: { trip: 
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
-  const offlineKey = trip ? `wanderful:offline-pack:${trip.id}` : "";
 
   useEffect(() => {
     if (!trip) return;
     const controller = new AbortController();
     setLoading(true); setStatus(""); setScenarios([]); setFeedbackSent({});
-    const cached = localStorage.getItem(`wanderful:offline-pack:${trip.id}`);
-    if (cached) { try { setOfflinePack(JSON.parse(cached) as OfflineTripPack); } catch { localStorage.removeItem(`wanderful:offline-pack:${trip.id}`); } } else setOfflinePack(null);
+    setOfflinePack(null);
+    void listOfflinePacks().then(packs => { if (!controller.signal.aborted) setOfflinePack(packs.find(pack => String(pack.trip.id) === String(trip.id)) || null); }).catch(() => undefined);
     void apiFetch(`/api/trips/${trip.id}/intelligence`, { signal: controller.signal })
       .then((response) => readApiJson<{ health: TripHealth; live: LiveView; constraints: Record<string, Constraint>; budget: BudgetGuardian }>(response))
       .then((payload) => { setHealth(payload.health); setLive(payload.live); setConstraints(payload.constraints || {}); setBudget(payload.budget); })
@@ -77,7 +78,7 @@ export function TripIntelligencePanel({ trip, onClose, onTripUpdated }: { trip: 
     const previous = constraints; const next = { ...constraints, [itemKey]: value };
     setConstraints(next); setSavingConstraint(itemKey);
     try {
-      const payload = await apiFetch(`/api/trips/${trip.id}/constraints`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ constraints: next }) }).then((response) => readApiJson<{ trip: SavedTrip; health: TripHealth }>(response));
+      const payload = await apiFetch(`/api/trips/${trip.id}/constraints`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ constraints: next, expected_revision: trip.revision }) }).then((response) => readApiJson<{ trip: SavedTrip; health: TripHealth }>(response));
       setHealth(payload.health); onTripUpdated(payload.trip); setStatus("Priority saved.");
     } catch (error) { setConstraints(previous); setStatus(error instanceof Error ? error.message : "Could not save priority."); }
     finally { setSavingConstraint(""); }
@@ -95,7 +96,7 @@ export function TripIntelligencePanel({ trip, onClose, onTripUpdated }: { trip: 
   const saveBudget = async (expenses: BudgetExpense[], reservePercent = budget?.reserve_percent || 10) => {
     setLoading(true);
     try {
-      const payload = await apiFetch(`/api/trips/${trip.id}/budget`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ expenses, reserve_percent: reservePercent }) }).then((response) => readApiJson<{ trip: SavedTrip; budget: BudgetGuardian }>(response));
+      const payload = await apiFetch(`/api/trips/${trip.id}/budget`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ expenses, reserve_percent: reservePercent, expected_revision: trip.revision }) }).then((response) => readApiJson<{ trip: SavedTrip; budget: BudgetGuardian }>(response));
       setBudget(payload.budget); onTripUpdated(payload.trip); setStatus("Budget Guardian updated.");
     } catch (error) { setStatus(error instanceof Error ? error.message : "Could not update the budget."); }
     finally { setLoading(false); }
@@ -109,10 +110,11 @@ export function TripIntelligencePanel({ trip, onClose, onTripUpdated }: { trip: 
   };
 
   const prepareOffline = async () => {
+    const generation = offlineGeneration();
     setLoading(true);
     try {
       const payload = await apiFetch(`/api/trips/${trip.id}/offline-pack`).then((response) => readApiJson<{ pack: OfflineTripPack }>(response));
-      localStorage.setItem(offlineKey, JSON.stringify(payload.pack)); setOfflinePack(payload.pack); setStatus("Offline trip pack saved on this device.");
+      await saveOfflinePack(payload.pack, generation); setOfflinePack(payload.pack); setStatus("Offline trip pack saved on this device. Open /offline to read it without a connection.");
     } catch (error) { setStatus(error instanceof Error ? error.message : "Could not prepare this trip for offline use."); }
     finally { setLoading(false); }
   };
@@ -135,7 +137,7 @@ export function TripIntelligencePanel({ trip, onClose, onTripUpdated }: { trip: 
   const applyScenario = async (scenario: DisruptionScenario) => {
     setLoading(true);
     try {
-      const payload = await apiFetch(`/api/trips/${trip.id}/disruptions`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ event: scenario.event, strategy: scenario.strategy, day_number: scenario.day_number, apply: true }) }).then((response) => readApiJson<{ trip: SavedTrip; health: TripHealth; live: LiveView; budget: BudgetGuardian }>(response));
+      const payload = await apiFetch(`/api/trips/${trip.id}/disruptions`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ event: scenario.event, strategy: scenario.strategy, day_number: scenario.day_number, apply: true, expected_revision: trip.revision }) }).then((response) => readApiJson<{ trip: SavedTrip; health: TripHealth; live: LiveView; budget: BudgetGuardian }>(response));
       onTripUpdated(payload.trip); setHealth(payload.health); setLive(payload.live); setBudget(payload.budget); setScenarios([]); setStatus(`${scenario.title} applied. Locked commitments were preserved.`);
     } catch (error) { setStatus(error instanceof Error ? error.message : "Could not apply the recovery path."); }
     finally { setLoading(false); }
@@ -148,8 +150,8 @@ export function TripIntelligencePanel({ trip, onClose, onTripUpdated }: { trip: 
       {status ? <p role="status" aria-live="polite" className="mt-4 rounded-2xl border border-[#3fb6c4]/15 bg-[#3fb6c4]/8 px-4 py-3 text-sm text-white/70">{status}</p> : null}
       {loading && !health ? <p role="status" className="mt-8 text-white/60">Loading trip intelligence...</p> : null}
       {activeTab === "health" && health ? <HealthView health={health} activities={activities} dayNumber={dayNumber} constraints={constraints} savingConstraint={savingConstraint} savingFeedback={savingFeedback} feedbackSent={feedbackSent} destination={trip.destination} onConstraint={saveConstraint} onFeedback={sendFeedback} /> : null}
-      {activeTab === "budget" && budget ? <BudgetView budget={budget} form={expenseForm} busy={loading} onForm={setExpenseForm} onAdd={addExpense} onRemove={(id) => void saveBudget(budget.expenses.filter((expense) => expense.id !== id))} onReserve={(value) => void saveBudget(budget.expenses, value)} /> : null}
-      {activeTab === "offline" ? <OfflineView pack={offlinePack} isOnline={isOnline} busy={loading} onPrepare={prepareOffline} onDownload={downloadOfflinePack} onRemove={() => { localStorage.removeItem(offlineKey); setOfflinePack(null); setStatus("Offline copy removed from this device."); }} /> : null}
+      {activeTab === "budget" ? <ExactLedger key={trip.id} trip={trip} onUpdated={onTripUpdated} /> : null}
+      {activeTab === "offline" ? <><a href="/offline" className="mt-4 inline-flex min-h-11 items-center rounded-full border border-white/25 px-4 text-white">Open offline companion</a><OfflineView pack={offlinePack} isOnline={isOnline} busy={loading} onPrepare={prepareOffline} onDownload={downloadOfflinePack} onRemove={() => { void removeOfflinePack(trip.id).then(() => { setOfflinePack(null); setStatus("Offline copy removed from this device."); }).catch(() => setStatus("Could not remove the device copy. Please retry.")); }} /></> : null}
       {activeTab === "disruptions" ? <DisruptionView events={live?.events || []} selectedEvent={selectedEvent} scenarios={scenarios} busy={loading} history={trip.disruptionHistory || []} onAnalyze={analyzeDisruption} onApply={applyScenario} /> : null}
     </div>
   </div>;

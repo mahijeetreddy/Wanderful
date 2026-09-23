@@ -1,4 +1,12 @@
 from unittest.mock import Mock, patch
+import pytest
+from auth_store import create_user
+
+
+@pytest.fixture(autouse=True)
+def planning_owner(reset_database):
+    owner = create_user("Planner", "admin@example.com", "test-password")
+    assert owner["id"] == 1
 
 from runtime_store import (
     begin_day_regeneration,

@@ -4,13 +4,14 @@ import { queryClient } from "./features/auth/session";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import { SharedTripView } from "./features/share/SharedTripView";
+import { OfflineView } from "./features/offline/OfflineView";
 import "./index.css";
 
 const shareMatch = window.location.pathname.match(/^\/share\/([^/]+)$/);
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <QueryClientProvider client={queryClient}>{shareMatch ? <SharedTripView token={shareMatch[1]} /> : <App />}</QueryClientProvider>
+    <QueryClientProvider client={queryClient}>{window.location.pathname === "/offline" ? <OfflineView /> : shareMatch ? <SharedTripView token={shareMatch[1]} /> : <App />}</QueryClientProvider>
   </React.StrictMode>,
 );
 

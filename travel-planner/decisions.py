@@ -50,6 +50,8 @@ def proximity(offer, structured):
 
 def impact(trip, offer, kind, assumptions=None):
     assumptions = assumptions or {}
+    if not isinstance(assumptions, dict):
+        raise ValueError("Timing assumptions must be an object.")
     buffers = {"arrival_buffer_minutes": assumptions.get("arrival_buffer_minutes", 120), "departure_buffer_minutes": assumptions.get("departure_buffer_minutes", 180)}
     if any(type(value) is not int or not 0 <= value <= 720 for value in buffers.values()):
         raise ValueError("Transfer/check-in buffers must be whole minutes between 0 and 720.")
@@ -57,7 +59,7 @@ def impact(trip, offer, kind, assumptions=None):
     if zone:
         try:
             ZoneInfo(zone)
-        except (ZoneInfoNotFoundError, ValueError):
+        except (ZoneInfoNotFoundError, ValueError, TypeError):
             raise ValueError("Use a valid IANA destination time zone, such as Europe/Lisbon.")
     structured = deepcopy(trip.get("structuredItinerary") or {})
     currency = trip.get("form", {}).get("currency_code", "USD")

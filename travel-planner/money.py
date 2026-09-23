@@ -6,7 +6,7 @@ EXPONENTS = {**{code: 2 for code in _TWO.split()}, **{code: 0 for code in "JPY K
 
 
 def exponent(currency):
-    if currency not in EXPONENTS:
+    if not isinstance(currency, str) or currency not in EXPONENTS:
         raise ValueError("Unsupported currency precision. Choose a supported trip currency; no conversion is performed.")
     return EXPONENTS[currency]
 

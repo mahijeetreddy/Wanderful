@@ -29,6 +29,8 @@ export type PlanJob = {
 };
 
 export type StructuredActivityData = {
+  schedule_conflict?: string;
+  source_id?: string;
   time?: string;
   period?: string;
   title: string;
@@ -327,6 +329,7 @@ export type DisruptionHistoryItem = {
 };
 
 export type OfflineTripPack = {
+  owner_id?: number;
   version: number;
   generated_at: string;
   checksum: string;

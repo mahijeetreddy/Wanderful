@@ -23,6 +23,7 @@ def test_group_expenses_preserve_members_splits_and_settlements(client):
     _register(client)
     trip_id = _trip(client)
     response = client.put(f"/api/trips/{trip_id}/budget", json={
+        "expected_revision": 1,
         "members": ["Me", "Ava", "Noah"],
         "expenses": [{"id": "dinner", "label": "Dinner", "category": "Food", "amount": 120, "paid_by": "Ava", "split_between": ["Me", "Ava", "Noah"]}],
         "settlements": [{"id": "paid", "from": "Me", "to": "Ava", "amount": 20}],
@@ -56,6 +57,7 @@ def test_private_document_upload_download_and_delete(client):
     downloaded = client.get(f"/api/trips/{trip_id}/documents/{document['id']}/download")
     assert downloaded.status_code == 200
     assert downloaded.data == pdf
+    assert downloaded.headers["Cache-Control"] == "private, no-store"
     downloaded.close()
 
     removed = client.delete(f"/api/trips/{trip_id}/documents/{document['id']}")
@@ -65,7 +67,7 @@ def test_private_document_upload_download_and_delete(client):
 
 def test_route_map_resolves_stops_concurrently(client):
     _register(client)
-    with patch("web_app._geocode_place", side_effect=[{"lat": 38.71, "lng": -9.14}, {"lat": 38.72, "lng": -9.13}]):
+    with patch("places.lookup_place", side_effect=[{"coordinates": {"lat": 38.71, "lng": -9.14}, "source_id": "market"}, {"coordinates": {"lat": 38.72, "lng": -9.13}, "source_id": "viewpoint"}]):
         response = client.post("/api/route-map", json={"destination": "Lisbon", "stops": [
             {"title": "Market", "location": "Time Out Market"},
             {"title": "Viewpoint", "location": "Miradouro da Senhora"},

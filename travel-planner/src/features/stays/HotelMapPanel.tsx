@@ -14,15 +14,15 @@ import { StatPill, HotelMetric, EmptyResult, FlightControlField, inferInitialNig
 const hotelMarker = L.divIcon({
   className: "hotel-marker",
   html: "<span></span>",
-  iconSize: [28, 28],
-  iconAnchor: [14, 14],
+  iconSize: [44, 44],
+  iconAnchor: [22, 22],
 });
 
 const selectedHotelMarker = L.divIcon({
   className: "hotel-marker hotel-marker-selected",
   html: "<span></span>",
-  iconSize: [36, 36],
-  iconAnchor: [18, 18],
+  iconSize: [44, 44],
+  iconAnchor: [22, 22],
 });
 
 function validCoordinates(value?: Coordinates | null): value is Coordinates {

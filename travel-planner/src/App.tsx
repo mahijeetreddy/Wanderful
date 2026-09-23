@@ -12,6 +12,7 @@ import { FlightOptionsPanel } from "./features/flights/FlightOptionsPanel";
 import { HotelMapPanel } from "./features/stays/HotelMapPanel";
 import { useTripWorkspace } from "./features/trips/useTripWorkspace";
 import { BookingSelections } from "./features/trips/BookingSelections";
+import { DecisionPreview, type Decision } from "./features/trips/DecisionPreview";
 import { TripOverview } from "./features/trips/TripOverview";
 import { invalidateSession, observeSessionEnd, queryClient } from "./features/auth/session";
 import { AdminPanel } from "./features/admin/AdminPanel";
@@ -119,6 +120,7 @@ function App() {
   const [activeSavedTrip, setActiveSavedTrip] = useState<{ id: string; revision?: number } | null>(null);
   const workspaceGeneration = useRef(0);
   const savingTrip = useRef(false);
+  const [pendingTripDecision, setPendingTripDecision] = useState<{ tripId: string; generation: number; decision: Decision } | null>(null);
   const [savedTripsOpen, setSavedTripsOpen] = useState(false);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
@@ -345,6 +347,13 @@ function App() {
       videoRef.current.playbackRate = 1.25;
     }
   };
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (itinerary || window.matchMedia("(prefers-reduced-motion: reduce)").matches) video.pause();
+    else void video.play().catch(() => undefined);
+  }, [itinerary]);
 
   const submitPlan = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -667,6 +676,7 @@ function App() {
   };
 
   const loadSavedTrip = (trip: SavedTrip) => {
+    setPendingTripDecision(null);
     workspaceGeneration.current += 1;
     setActiveSavedTrip(authUser ? { id: trip.id, revision: trip.revision } : null);
     setForm(trip.form);
@@ -731,6 +741,23 @@ function App() {
     savingTrip.current = true;
     const generation = workspaceGeneration.current;
     try {
+      const original = savedTrips.find(item => item.id === activeSavedTrip?.id);
+      const changedSelection = (["flights", "hotels"] as const).some(kind => {
+        const key = kind === "flights" ? "locked_flight_id" : "locked_hotel_id";
+        const beforeId = original?.structuredItinerary?.[key] || "";
+        const afterId = trip.structuredItinerary?.[key] || "";
+        const before = original?.options[kind]?.find(item => item.id === beforeId)?.snapshot_id;
+        const after = trip.options[kind]?.find(item => item.id === afterId)?.snapshot_id;
+        return beforeId !== afterId || before !== after;
+      });
+      if (activeSavedTrip && changedSelection) {
+        const response = await apiFetch(`/api/trips/${activeSavedTrip.id}/decisions/workspace-preview`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...trip, structuredItinerary: trip.structuredItinerary || {}, expected_revision: activeSavedTrip.revision }) });
+        const payload = await response.json();
+        if (generation !== workspaceGeneration.current) return;
+        if (!response.ok) throw new Error(payload.error || "Could not preview this change.");
+        setPendingTripDecision({ tripId: activeSavedTrip.id, generation, decision: payload });
+        return;
+      }
       const response = await apiFetch(activeSavedTrip ? `/api/trips/${activeSavedTrip.id}` : "/api/trips", {
         method: activeSavedTrip ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
@@ -847,6 +874,7 @@ function App() {
   };
 
   const clearActiveTripState = () => {
+    setPendingTripDecision(null);
     workspaceGeneration.current += 1;
     setActiveSavedTrip(null);
     planAbortRef.current?.abort();
@@ -901,8 +929,13 @@ function App() {
 
   return (
     <div className="app-shell min-h-screen overflow-x-hidden bg-black text-white">
+      {pendingTripDecision && <DecisionPreview tripId={pendingTripDecision.tripId} decision={pendingTripDecision.decision} onClose={() => setPendingTripDecision(null)} onApplied={(updated) => {
+        if (pendingTripDecision.generation !== workspaceGeneration.current) return;
+        setSavedTrips(current => current.map(item => item.id === updated.id ? updated : item));
+        loadSavedTrip(updated);
+      }} />}
       {cursorEnabled ? <FuturisticCursor /> : null}
-      <div ref={videoWrapRef} className="fixed inset-0 z-0 origin-center scale-[1.08]">
+      <div ref={videoWrapRef} style={{ display: itinerary ? "none" : undefined }} className="fixed inset-0 z-0 origin-center scale-[1.08]">
         <video
           ref={videoRef}
           className="h-full w-full object-cover"

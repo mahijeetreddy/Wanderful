@@ -6,13 +6,59 @@ No commits, deployments, hosted migrations, or service purchases.
 | Phase | Status | Acceptance evidence |
 | --- | --- | --- |
 | 1. Trustworthy search and selection | Core acceptance journeys verified; integration follow-ups remain | SQLite/PostgreSQL migrations; save/reopen/reload, booking status, account isolation and delayed logout tests |
-| 2. Flights and stays experience | In progress | Fourteen desktop/mobile journeys and six pure logic checks pass; production build passes |
-| 3. Connected decisions | Revision groundwork implemented; impact service pending | Same-trip updates, stale drafts, snapshot prices and two-writer conflict tests pass |
-| 4. Operational reliability | Pending | Pending |
+| 2. Flights and stays experience | In progress | Eighteen desktop/mobile journeys and six pure logic checks pass; production build passes |
+| 3. Connected decisions | Preview/apply and exact ledger implemented; integration follow-ups remain | Signed revision-bound previews, timing conflicts, linked-payment arithmetic and desktop/mobile selection review |
+| 4. Operational reliability | In progress | Individual records, legacy import view, vault storage safeguards and local volume configuration; remaining gates listed below |
 | 5. Evaluation and monitoring | Pending | Pending |
 
 Each phase must pass its checks before the next is considered complete. Live provider
 latency and hosted infrastructure are not verified by fixture tests.
+
+## Latest increment — connected workspace and vault (2026-09-23)
+
+This section supersedes the earlier milestone notes below; no phase is being declared
+complete solely because its implementation exists.
+
+- Selection changes can be reviewed in the saved-trip booking panel and main workspace.
+  Signed previews are revision-bound and expire; applying updates selections, budgets,
+  and itinerary conflict annotations together. Locked activity conflicts block applying.
+  Destination time zone and transfer buffers are explicit assumptions; unavailable
+  timing evidence produces a warning, not fabricated travel windows.
+- The ledger distinguishes planned costs, user-recorded commitments, payments, and
+  expected remaining costs. Linking a payment to a booking avoids double counting.
+  Expenses/members/settlements use individual records, stable IDs, idempotent creation,
+  exact minor units, and revision checks. Original legacy JSON remains preserved.
+- Group expenses now use the same ledger as Budget Guardian. Failed writes retain the
+  draft. Booking changes with linked payments require explicit payment review.
+- Budget, constraint, disruption and live-adjustment API writes require an expected
+  revision. SQLite now enforces foreign keys; six job fixtures were corrected to create
+  an actual owning account instead of relying on disabled integrity checks.
+- Place lookup no longer uses weather geocoding for attractions. Existing SerpAPI Maps
+  lookup conservatively matches title/address and preserves source identity; unresolved
+  stops retain list entries and external Maps links. Further persistence of verified
+  coordinates and stay-proximity ranking remain to be completed.
+- Added hotel-photo fallbacks, larger map markers, visible itinerary conflict notices,
+  and pausing/hiding the background video inside the trip workspace.
+- Vault storage has a filesystem interface, exclusive private file creation, safe paths,
+  production mount checks, and a named local Compose volume. Downloads are owner-only
+  and non-cacheable. The copy/verification command never deletes originals or overwrites
+  mismatched files. See [vault operations](VAULT_STORAGE.md).
+- Docker frontend packaging now includes public assets. Full service-worker/offline
+  packaging and cache-policy replacement remain outstanding.
+- Validation: **100 backend tests passed** in 157.77 seconds; **24 frontend checks passed**
+  (18 desktop/mobile browser journeys and six pure logic checks, 2.9 minutes).
+  TypeScript/production build and `docker compose config --quiet` passed.
+  Mobile decision-preview and desktop ledger screenshots were inspected locally.
+  Vault tests reopen storage across instances; this is not a real container recreation.
+
+Remaining acceptance work: finish keyboard/contrast and tool integration checks;
+complete coordinate persistence/stay ranking and preview validation; expose safe undo;
+verify migration 08 on disposable PostgreSQL; validate mounted-vault container recreation;
+move offline packs to account-scoped IndexedDB with a read-only offline entry and versioned
+assets; implement disabled-by-default weather monitoring and fixture/live-capped benchmarks.
+Legacy selection clients still need the mandatory-revision migration. Existing reserve
+budget controls also need integration into the exact ledger. No hosted migration, volume,
+monitoring job, deployment, commit, or push was performed.
 
 ## Phase 1 implemented locally
 

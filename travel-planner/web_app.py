@@ -128,8 +128,8 @@ app.config.update(
     SESSION_COOKIE_SAMESITE="Lax",
     MAX_CONTENT_LENGTH=10_000_000,
 )
-VAULT_ROOT = Path(os.getenv("VAULT_STORAGE_DIR", Path.cwd() / ".crewai_runtime" / "travel-vault")).resolve()
-VAULT_ROOT.mkdir(parents=True, exist_ok=True)
+from vault_storage import configured_vault
+vault_storage = configured_vault(production=settings.production)
 ALLOWED_DOCUMENT_TYPES = {"application/pdf", "image/jpeg", "image/png", "image/webp"}
 limiter = Limiter(
     key_func=lambda: str(session.get("user_id") or get_remote_address()),
@@ -452,8 +452,10 @@ def trip_budget_put(trip_id: int):
     user = current_user(require_active=True)
     if not get_saved_trip(user["id"], trip_id):
         return jsonify({"error": "Saved trip not found."}), 404
-    state = normalize_budget_state(_json_body())
-    trip = update_trip_budget(user["id"], trip_id, state)
+    body = _json_body()
+    expected = _required_revision(body)
+    state = normalize_budget_state(body)
+    trip = update_trip_budget(user["id"], trip_id, state, expected)
     return jsonify({"trip": trip, "budget": build_budget_guardian(trip or {})})
 
 
@@ -487,10 +489,7 @@ def trip_documents_post(trip_id: int):
         return jsonify({"error": "Only PDF, JPG, PNG, and WebP files are supported."}), 400
     extension = {"application/pdf": ".pdf", "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}[mime_type]
     storage_name = f"{user['id']}-{trip_id}-{uuid.uuid4().hex}{extension}"
-    target = (VAULT_ROOT / storage_name).resolve()
-    if target.parent != VAULT_ROOT:
-        return jsonify({"error": "Invalid vault path."}), 400
-    target.write_bytes(content)
+    vault_storage.put(storage_name, content)
     try:
         document = create_travel_document(user["id"], trip_id, {
             "name": Path(upload.filename).name,
@@ -501,7 +500,7 @@ def trip_documents_post(trip_id: int):
             "expires_on": _clean_text(request.form.get("expires_on")),
         })
     except Exception:
-        target.unlink(missing_ok=True)
+        vault_storage.delete(storage_name)
         raise
     return jsonify({"document": {key: value for key, value in document.items() if key != "storage_name"}}), 201
 
@@ -513,10 +512,13 @@ def trip_document_download(trip_id: int, document_id: str):
     document = get_travel_document(user["id"], trip_id, document_id)
     if not document:
         return jsonify({"error": "Document not found."}), 404
-    target = (VAULT_ROOT / document["storage_name"]).resolve()
-    if target.parent != VAULT_ROOT or not target.is_file():
+    target = vault_storage.path(document["storage_name"])
+    if not target.is_file():
         return jsonify({"error": "Document file is unavailable."}), 404
-    return send_file(target, mimetype=document["mime_type"], as_attachment=True, download_name=document["name"])
+    response = send_file(target, mimetype=document["mime_type"], as_attachment=True, download_name=document["name"], conditional=False)
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 @app.delete("/api/trips/<int:trip_id>/documents/<document_id>")
@@ -526,12 +528,10 @@ def trip_document_delete(trip_id: int, document_id: str):
     document = get_travel_document(user["id"], trip_id, document_id)
     if not document:
         return jsonify({"error": "Document not found."}), 404
-    target = (VAULT_ROOT / document["storage_name"]).resolve()
-    if target.parent == VAULT_ROOT:
-        try:
-            target.unlink(missing_ok=True)
-        except PermissionError:
-            return jsonify({"error": "Document is currently open. Close the download and try again."}), 409
+    try:
+        vault_storage.delete(document["storage_name"])
+    except PermissionError:
+        return jsonify({"error": "Document is currently open. Close the download and try again."}), 409
     delete_travel_document(user["id"], trip_id, document_id)
     return jsonify({"ok": True})
 
@@ -554,8 +554,9 @@ def route_map_post():
     if not destination or not stops:
         return jsonify({"error": "Destination and at least one stop are required."}), 400
     with ThreadPoolExecutor(max_workers=min(4, len(stops))) as executor:
-        coordinates = list(executor.map(lambda stop: _geocode_place(f"{stop['location']}, {destination}"), stops))
-    resolved = [{**stop, "coordinates": point} for stop, point in zip(stops, coordinates) if point]
+        from places import lookup_place
+        coordinates = list(executor.map(lambda stop: lookup_place(stop, destination), stops))
+    resolved = [{**stop, **point} for stop, point in zip(stops, coordinates) if point]
     return jsonify({"stops": resolved, "unresolved": len(stops) - len(resolved)})
 
 
@@ -606,7 +607,7 @@ def trip_disruption_post(trip_id: int):
         "applied_at": applied_at,
     }
     updated = apply_disruption_scenario(
-        user["id"], trip_id, selected["structuredItinerary"], live_state, history_entry
+        user["id"], trip_id, selected["structuredItinerary"], live_state, history_entry, _required_revision(payload)
     )
     return jsonify({
         "trip": updated,
@@ -620,12 +621,13 @@ def trip_disruption_post(trip_id: int):
 @require_active_user
 def trip_constraints_put(trip_id: int):
     user = current_user(require_active=True)
-    constraints = _json_body().get("constraints")
+    body = _json_body()
+    constraints = body.get("constraints")
     if not isinstance(constraints, dict):
         raise ValueError("constraints must be an object.")
     if len(constraints) > 500:
         raise ValueError("A trip cannot contain more than 500 activity constraints.")
-    trip = update_trip_constraints(user["id"], trip_id, constraints)
+    trip = update_trip_constraints(user["id"], trip_id, constraints, _required_revision(body))
     if not trip:
         return jsonify({"error": "Saved trip not found."}), 404
     return jsonify({"trip": trip, "health": assess_trip(trip)})
@@ -653,7 +655,7 @@ def trip_live_adjust(trip_id: int):
         "changes": preview["changes"],
     }
     updated = apply_trip_adjustment(
-        user["id"], trip_id, preview["structuredItinerary"], live_state
+        user["id"], trip_id, preview["structuredItinerary"], live_state, _required_revision(payload)
     )
     return jsonify(
         {
@@ -1118,6 +1120,13 @@ def _geocode_place(query: str) -> dict[str, float] | None:
 
 def _clean_text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _required_revision(body):
+    value = body.get("expected_revision")
+    if type(value) is not int or value < 1:
+        raise ValueError("A positive expected_revision is required. Refresh the saved trip first.")
+    return value
 
 
 def _friendly_error(error: Exception) -> str:
