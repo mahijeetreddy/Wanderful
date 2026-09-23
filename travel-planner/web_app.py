@@ -399,6 +399,24 @@ def trips_create():
     return jsonify({"trip": create_saved_trip(user["id"], payload)}), 201
 
 
+from sqlalchemy.orm.exc import StaleDataError
+from trip_mutations import TripRevisionConflict, update_workspace
+
+
+@app.errorhandler(TripRevisionConflict)
+@app.errorhandler(StaleDataError)
+def trip_revision_conflict(error):
+    message = str(error) if isinstance(error, TripRevisionConflict) else "This trip changed while saving. Your draft is retained; reopen the saved version to reconcile."
+    return jsonify({"error": message, "code": "revision_conflict"}), 409
+
+
+@app.put("/api/trips/<int:trip_id>")
+@require_active_user
+def trips_update(trip_id):
+    trip = update_workspace(current_user(require_active=True)["id"], trip_id, _json_body())
+    return (jsonify({"trip": trip}), 200) if trip else (jsonify({"error": "Saved trip not found."}), 404)
+
+
 @app.delete("/api/trips/<int:trip_id>")
 @require_active_user
 def trips_delete(trip_id: int):
@@ -1115,6 +1133,8 @@ def _friendly_error(error: Exception) -> str:
 
 from search_routes import make_search_blueprint
 app.register_blueprint(make_search_blueprint(_validate_payload, limiter))
+from workspace_routes import make_workspace_blueprint
+app.register_blueprint(make_workspace_blueprint())
 
 
 if __name__ == "__main__":

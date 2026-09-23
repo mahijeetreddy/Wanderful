@@ -245,6 +245,7 @@ export type DayPlan = {
 };
 
 export type SavedTrip = {
+  revision?: number;
   selections?: TripSelection[];
   id: string;
   name: string;

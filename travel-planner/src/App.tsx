@@ -116,6 +116,9 @@ function App() {
   const [authResolved, setAuthResolved] = useState(false);
   const [hydratedScope, setHydratedScope] = useState<string | null>(null);
   const [savedTrips, setSavedTrips] = useState<SavedTrip[]>([]);
+  const [activeSavedTrip, setActiveSavedTrip] = useState<{ id: string; revision?: number } | null>(null);
+  const workspaceGeneration = useRef(0);
+  const savingTrip = useRef(false);
   const [savedTripsOpen, setSavedTripsOpen] = useState(false);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
@@ -157,6 +160,8 @@ function App() {
       return;
     }
     setHydratedScope(null);
+    workspaceGeneration.current += 1;
+    setActiveSavedTrip(null);
     setForm(initialForm);
     setItinerary("");
     setStructuredItinerary(null);
@@ -177,10 +182,12 @@ function App() {
           options?: PlannerOptions;
           resultTab?: ResultTab;
           activePlanJobId?: string | null;
+          activeSavedTrip?: { id: string; revision?: number } | null;
         };
         if (parsed.form) {
           setForm({ ...initialForm, ...parsed.form });
         }
+        if (authUser && parsed.activeSavedTrip?.id) setActiveSavedTrip(parsed.activeSavedTrip);
         if (parsed.itinerary) {
           setItinerary(parsed.itinerary);
         }
@@ -215,10 +222,11 @@ function App() {
       options,
       resultTab,
       activePlanJobId,
+      activeSavedTrip,
       savedAt: new Date().toISOString(),
     };
     window.localStorage.setItem(workspaceScope as string, JSON.stringify(payload));
-  }, [activePlanJobId, form, hydrated, itinerary, options, resultTab, structuredItinerary, workspaceScope]);
+  }, [activeSavedTrip, activePlanJobId, form, hydrated, itinerary, options, resultTab, structuredItinerary, workspaceScope]);
 
   useEffect(() => {
     if (!hydrated) {
@@ -340,6 +348,8 @@ function App() {
 
   const submitPlan = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    workspaceGeneration.current += 1;
+    setActiveSavedTrip(null);
     planAbortRef.current?.abort();
     const controller = new AbortController();
     planAbortRef.current = controller;
@@ -657,6 +667,8 @@ function App() {
   };
 
   const loadSavedTrip = (trip: SavedTrip) => {
+    workspaceGeneration.current += 1;
+    setActiveSavedTrip(authUser ? { id: trip.id, revision: trip.revision } : null);
     setForm(trip.form);
     setItinerary(trip.itinerary);
     setStructuredItinerary(trip.structuredItinerary || null);
@@ -715,22 +727,29 @@ function App() {
   };
 
   const saveAccountTrip = async (trip: SavedTrip) => {
+    if (savingTrip.current) return;
+    savingTrip.current = true;
+    const generation = workspaceGeneration.current;
     try {
-      const response = await apiFetch("/api/trips", {
-        method: "POST",
+      const response = await apiFetch(activeSavedTrip ? `/api/trips/${activeSavedTrip.id}` : "/api/trips", {
+        method: activeSavedTrip ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(trip),
+        body: JSON.stringify({ ...trip, structuredItinerary: trip.structuredItinerary || {}, expected_revision: activeSavedTrip?.revision }),
       });
       const payload = await parsePlanResponse(response) as PlanResponse & { trip?: SavedTrip };
+      if (generation !== workspaceGeneration.current) return;
       if (!response.ok || !payload.trip) {
         throw new Error(payload.error || "Could not save trip.");
       }
-      setSavedTrips((current) => [payload.trip as SavedTrip, ...current].slice(0, 20));
+      setActiveSavedTrip({ id: payload.trip.id, revision: payload.trip.revision });
+      setSavedTrips((current) => [payload.trip as SavedTrip, ...current.filter((item) => item.id !== payload.trip!.id)].slice(0, 20));
       await savePreferencesFromCurrentTrip();
+      if (generation !== workspaceGeneration.current) return;
       setSavedTripsOpen(true);
     } catch (caught) {
+      if (generation !== workspaceGeneration.current) return;
       setError(caught instanceof Error ? caught.message : "Could not save trip.");
-    }
+    } finally { savingTrip.current = false; }
   };
 
   const deleteAccountTrip = async (tripId: string) => {
@@ -828,6 +847,8 @@ function App() {
   };
 
   const clearActiveTripState = () => {
+    workspaceGeneration.current += 1;
+    setActiveSavedTrip(null);
     planAbortRef.current?.abort();
     planAbortRef.current = null;
     setLoading(false);

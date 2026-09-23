@@ -27,6 +27,7 @@ def init_auth_store() -> None:
         ensure_local_column("users", "approved_by", "integer")
         ensure_local_column("users", "updated_at", "datetime")
         ensure_local_column("saved_trips", "structured_json", "text not null default '{}'")
+        ensure_local_column("saved_trips", "revision", "integer not null default 1")
         ensure_local_column("saved_trips", "constraints_json", "text not null default '{}'")
         ensure_local_column("saved_trips", "live_state_json", "text not null default '{}'")
         ensure_local_column("saved_trips", "budget_state_json", "text not null default '{}'")
@@ -484,6 +485,7 @@ def _selection_dicts(db, trip_id: int) -> list[dict[str, Any]]:
 def _trip_dict(trip: SavedTrip, *, share_token: str | None = None) -> dict[str, Any]:
     return {
         "id": str(trip.id),
+        "revision": trip.revision,
         "name": trip.name,
         "destination": trip.destination,
         "dateRange": trip.date_range,

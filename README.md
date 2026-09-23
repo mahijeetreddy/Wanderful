@@ -92,20 +92,21 @@ The five-phase product upgrade is underway, not complete:
 
 | Phase | Current state |
 | --- | --- |
-| 1. Trustworthy search and selection | Core journeys verified; universal saved-trip update flow remains |
+| 1. Trustworthy search and selection | Core journeys verified; legacy tool integration remains |
 | 2. Flights and stays experience | In progress: comparison, filters, room-rate snapshots and flight-leg summaries implemented |
-| 3. Connected trip decisions | Pending |
+| 3. Connected trip decisions | Revision-safe saves implemented; impact previews pending |
 | 4. Operational reliability | Pending |
 | 5. Provider evaluation and weather monitoring | Pending |
 
-Local verification on September 22, 2026: **88 backend tests**, **16 frontend checks**
-(10 browser journeys and 6 pure logic checks across desktop/mobile projects), and a
+Local verification on September 23, 2026: **92 backend tests**, **20 frontend checks**
+(14 browser journeys and 6 pure logic checks across desktop/mobile projects), and a
 successful production build. These are fixture-based checks, not live-provider latency
 or availability guarantees. See [implementation status](travel-planner/docs/IMPLEMENTATION_STATUS.md)
 for evidence and remaining limitations.
 
-Reopened trips still require explicit Save in the main workspace; revision-aware updates
-of the original saved trip are not yet universal. Weather monitoring is not yet implemented;
+Reopened trips use explicit Save to update the original saved trip with revision checking;
+conflicts retain the local draft. Other legacy tool routes still need the same client-revision
+contract. Weather monitoring is not yet implemented;
 disruption recovery is user-triggered. Groups remain owner-managed, without invitations
 or shared editing.
 

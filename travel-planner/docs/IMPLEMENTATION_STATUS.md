@@ -6,8 +6,8 @@ No commits, deployments, hosted migrations, or service purchases.
 | Phase | Status | Acceptance evidence |
 | --- | --- | --- |
 | 1. Trustworthy search and selection | Core acceptance journeys verified; integration follow-ups remain | SQLite/PostgreSQL migrations; save/reopen/reload, booking status, account isolation and delayed logout tests |
-| 2. Flights and stays experience | In progress | Ten desktop/mobile journeys and six pure logic checks pass; production build passes |
-| 3. Connected decisions | Pending | Pending |
+| 2. Flights and stays experience | In progress | Fourteen desktop/mobile journeys and six pure logic checks pass; production build passes |
+| 3. Connected decisions | Revision groundwork implemented; impact service pending | Same-trip updates, stale drafts, snapshot prices and two-writer conflict tests pass |
 | 4. Operational reliability | Pending | Pending |
 | 5. Evaluation and monitoring | Pending | Pending |
 
@@ -32,9 +32,9 @@ latency and hosted infrastructure are not verified by fixture tests.
 
 ## Validation and remaining work
 
-- Latest full backend suite: **88 passed** (2026-09-22), including property-detail
+- Latest full backend suite: **92 passed** (2026-09-23), including property-detail
   ownership, missing totals, safe links, selection state and legacy compatibility.
-- Frontend runner: 16 passed (ten actual browser journeys and six pure logic checks,
+- Frontend runner: 20 passed on 2026-09-23 (fourteen actual browser journeys and six pure logic checks,
   across desktop/mobile projects). Includes booking status, comparison limit, unknown
   prices, filter reset, empty/failed stay recovery, mobile view switching, workspace tabs,
   optional cursor, and delayed cross-tab logout. Fixtures do not measure live providers.
@@ -48,9 +48,10 @@ latency and hosted infrastructure are not verified by fixture tests.
   remain separate. Snapshot ownership, dates/travelers, and stale-selection guards are checked.
 - Independent provider retry controls and explicit completeness/missing evidence added.
   Explicit rechecks now bypass the application cache (upstream availability still not guaranteed).
-- Phase 1 follow-ups remain: edits in the main reopened workspace still use explicit Save
-  rather than a fully revision-aware update of the existing saved trip. Booking-panel mutations
-  update the saved trip directly; that path is not yet the universal workspace mutation path.
+- Main workspace Save now updates the same saved trip using its expected revision, including
+  after reload. Conflicts preserve the local draft rather than overwrite another version.
+  New-trip creation and legacy tool routes still need convergence on the universal mutation
+  contract; selection changes are not yet preceded by a connected-impact preview.
 
 ## Phase 2 implemented locally
 
@@ -70,7 +71,37 @@ latency and hosted infrastructure are not verified by fixture tests.
 - Connecting-leg outbound/return summaries and local arrival-day indicators are implemented.
   Selectable provider room/rate snapshots preserve the chosen price across refresh, reload,
   saving and reopening; unknown full-stay totals cannot be selected as verified quotes.
-- Remaining Phase 2 work: richer map journeys with coordinates and image/provider
-  failure tests, full keyboard/contrast audit, and fully integrated saved-trip tools.
-- Phases 3–5 remain pending: decision transactions, exact budget ledger, record-level
+- Stay-map tests now cover valid/invalid coordinates, marker-to-list selection, missing
+  photos, manual property-provider recovery, and keyboard dialog wrapping/restoration.
+  Viewing a map property no longer claims it is selected; chosen stays expose pressed state.
+  Shared dialogs explicitly wrap Tab/Shift+Tab between available controls.
+- Validation note: a six-worker run alongside the build timed out on the existing desktop
+  logout/reload journey (17 passed, one timeout). A complete two-worker rerun passed all 18
+  checks in 2.0 minutes; two workers are now the default. Production build passed.
+  That earlier UI increment had no backend changes; the newer revision increment passes
+  92 backend tests and 20 frontend checks.
+- Remaining Phase 2 work: full keyboard/contrast and touch-target audit, additional
+  property-photo failure coverage, and fully integrated saved-trip tools.
+
+## Revision foundation for connected decisions (2026-09-23)
+
+- Additive migration `20260923_07` backfills saved trips to revision 1. SQLAlchemy versioned
+  writes detect overlapping writers on SQLite and PostgreSQL; conflicts return HTTP 409.
+- `PUT /api/trips/:id` requires `expected_revision`, scopes access to the owner, preserves
+  independent budget/live-state/constraint records, and updates selected snapshots atomically.
+  Server-owned quote prices replace client copies; replacing externally booked selections
+  requires an explicit booking-status action. Historical IDs are not resolved as live offers.
+- Main workspace persists saved ID/revision across reload, guards duplicate save clicks and
+  ignores a late save response after switching/resetting the workspace. Stale drafts remain
+  on device; reconciliation currently requires reviewing and reopening the saved version.
+- Booking-panel writes now send the revision when available. Legacy selection clients remain
+  compatible; other tool endpoints do not yet require a client revision. This is not yet
+  complete cross-device protection for all budget/expense/itinerary tools or an undo system.
+- Full backend: 92 passed. Frontend: 20 passed with two workers (1.8 minutes). Build passed.
+  Disposable PostgreSQL 16: additive upgrade, schema drift, legacy JSON/expense preservation,
+  and revision backfill passed. The temporary container and anonymous fixture volume were
+  removed; no hosted database was touched.
+- Next: deterministic decision preview/apply with exact monetary calculations, local-time
+  activity windows and locked-activity conflicts. Then ledger and operational-reliability work.
+- Remaining Phase 3–5 work includes decision previews/transactions, exact budget ledger, record-level
   expenses, durable vault configuration, IndexedDB offline access, monitoring and benchmarks.

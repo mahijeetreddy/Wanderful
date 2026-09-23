@@ -4,6 +4,9 @@ from pydantic import BaseModel, Field
 
 
 class ActivityBlock(BaseModel):
+    coordinates: dict[str, float] | None = None
+    source_id: str = ""
+    schedule_conflict: str = ""
     time: str = ""
     period: str = Field(default="activity")
     title: str

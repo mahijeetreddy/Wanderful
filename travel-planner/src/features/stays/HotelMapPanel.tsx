@@ -25,6 +25,11 @@ const selectedHotelMarker = L.divIcon({
   iconAnchor: [18, 18],
 });
 
+function validCoordinates(value?: Coordinates | null): value is Coordinates {
+  return !!value && Number.isFinite(value.lat) && Number.isFinite(value.lng)
+    && Math.abs(value.lat) <= 90 && Math.abs(value.lng) <= 180;
+}
+
 export function HotelMapPanel({
   form,
   hotels,
@@ -50,9 +55,10 @@ export function HotelMapPanel({
   const [hotelStatus, setHotelStatus] = useState("");
   const [hotelStatusIsError, setHotelStatusIsError] = useState(false);
   const [hotelLoading, setHotelLoading] = useState(false);
-  const hotelsWithCoordinates = hotels.filter((hotel) => hotel.coordinates);
+  const hotelsWithCoordinates = hotels.filter((hotel) => validCoordinates(hotel.coordinates));
   const selectedHotel = hotels.find((hotel) => hotel.id === selectedHotelId) || hotels[0];
-  const center = selectedHotel?.coordinates || mapCenter || hotelsWithCoordinates[0]?.coordinates || { lat: 39.5, lng: -98.35 };
+  const center = (validCoordinates(selectedHotel?.coordinates) ? selectedHotel.coordinates : null)
+    || (validCoordinates(mapCenter) ? mapCenter : null) || hotelsWithCoordinates[0]?.coordinates || { lat: 39.5, lng: -98.35 };
 
   useEffect(() => {
     setSelectedHotelId((current) => hotels.some((hotel) => hotel.id === current) ? current : hotels.find((hotel) => hotel.id === lockedHotelId)?.id || hotels[0]?.id || "");
@@ -156,6 +162,7 @@ export function HotelMapPanel({
         {hotels.map((hotel, hotelIndex) => (
           <article
             key={hotel.id}
+            aria-label={hotel.name}
             style={{ animationDelay: `${Math.min(hotelIndex, 8) * 45}ms` }}
             className={`hotel-option-card stay-card card-hover card-enter group w-full cursor-pointer rounded-[26px] border p-4 text-left focus:outline-none focus:ring-2 focus:ring-[#3fb6c4]/30 ${
               selectedHotel?.id === hotel.id
@@ -192,6 +199,7 @@ export function HotelMapPanel({
             ) : null}
             <div className="mt-4 flex flex-wrap gap-2"><button
               type="button"
+              aria-pressed={lockedHotelId === hotel.id}
               onClick={(event) => {
                 event.stopPropagation();
                 selectHotel(hotel.id);
@@ -204,7 +212,7 @@ export function HotelMapPanel({
               {lockedHotelId === hotel.id ? "Selected" : "Choose stay"}
             </button>
             <button type="button" onClick={() => setDetailsHotel(hotel)} className="min-h-11 rounded-full border border-amber-200/25 px-4 text-sm text-amber-100">Stay details</button>
-            {hotel.coordinates ? <button type="button" onClick={() => { selectHotel(hotel.id); setMobileView("map"); }} className="min-h-11 rounded-full border border-[#72d7dc]/25 px-4 text-sm text-[#a9f1f1]">Show on map</button> : null}
+            {validCoordinates(hotel.coordinates) ? <button type="button" onClick={() => { selectHotel(hotel.id); setMobileView("map"); }} className="min-h-11 rounded-full border border-[#72d7dc]/25 px-4 text-sm text-[#a9f1f1]">Show on map</button> : <p className="self-center text-xs text-white/70">Map location unavailable</p>}
             {hotel.link ? (
               <a
                 href={hotel.link}
@@ -221,7 +229,7 @@ export function HotelMapPanel({
         ))}
       </div>
 
-      <div ref={mapShellRef} className={`${mobileView === "map" ? "block" : "hidden lg:block"} hotel-map-shell relative min-h-[540px] overflow-hidden rounded-[34px] border border-[#3fb6c4]/14 bg-[#0e1518]/60 shadow-[0_32px_110px_rgba(0,0,0,0.44)]`}>
+      <div ref={mapShellRef} role="region" aria-label="Stay map" className={`${mobileView === "map" ? "block" : "hidden lg:block"} hotel-map-shell relative min-h-[540px] overflow-hidden rounded-[34px] border border-[#3fb6c4]/14 bg-[#0e1518]/60 shadow-[0_32px_110px_rgba(0,0,0,0.44)]`}>
         <div className="pointer-events-none absolute inset-x-0 top-0 z-[500] h-28 bg-gradient-to-b from-black/70 to-transparent" />
         <div className="pointer-events-none absolute left-4 right-4 top-4 z-[501] flex flex-wrap items-start justify-between gap-3">
           <div className="rounded-2xl border border-[#3fb6c4]/12 bg-[#0e1518]/72 px-4 py-3 backdrop-blur-md">
@@ -230,7 +238,7 @@ export function HotelMapPanel({
           </div>
           {selectedHotel ? (
             <div className="max-w-[320px] rounded-2xl border border-[#3fb6c4]/12 bg-[#0e1518]/72 px-4 py-3 text-right backdrop-blur-md">
-              <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/45">Selected Stay</p>
+              <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/70">{lockedHotelId === selectedHotel.id ? "Selected stay" : "Viewing stay"}</p>
               <p className="mt-1 truncate text-sm font-medium text-white">{selectedHotel.name}</p>
               <p className="mt-1 text-xs text-white/55">{formatHotelMeta(selectedHotel)}</p>
             </div>
@@ -250,6 +258,8 @@ export function HotelMapPanel({
               return (
                 <Marker
                   key={hotel.id}
+                  title={`View ${hotel.name} on map`}
+                  alt={`View ${hotel.name} on map`}
                   position={[coordinates.lat, coordinates.lng]}
                   icon={selected ? selectedHotelMarker : hotelMarker}
                   eventHandlers={{ click: () => selectHotel(hotel.id) }}

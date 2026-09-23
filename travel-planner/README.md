@@ -24,9 +24,10 @@ budget and interests, not generic suggestions.
 ## Status
 
 The product upgrade is currently in **Phase 2 (Flights and Stays)**. Phase 1's core
-selection and account-isolation journeys are verified, but the main reopened workspace
-still uses explicit Save rather than a universal revision-aware update of the original trip.
-Phases 3–5 remain pending. See [implementation status](docs/IMPLEMENTATION_STATUS.md)
+selection and account-isolation journeys are verified. The main reopened workspace now
+updates the original trip with revision checking; stale drafts are retained for reconciliation.
+Phase 3 revision groundwork is implemented, while impact previews and Phases 4–5 remain
+pending. See [implementation status](docs/IMPLEMENTATION_STATUS.md)
 and the [product tour with screenshots](../README.md#product-tour).
 
 Implemented additions include independent provider status/retry, immutable server-owned
@@ -150,13 +151,15 @@ npm run test:browser
 
 The Playwright configuration uses installed Google Chrome locally and Chromium in CI;
 CI installs it with `npx playwright install --with-deps chromium`. Browser checks start
-an isolated Vite server on port 5174 and mock provider/account APIs. They do not make
+an isolated Vite server on port 5174, use two workers by default, and mock provider/account APIs. They do not make
 bookings or measure live provider performance.
 
-Latest local results (September 22, 2026): **88 backend tests passed**, **16 frontend
-checks passed** (10 browser journeys and 6 pure logic checks across two viewport projects),
-and TypeScript/production build passed. Coverage includes quote retention across refresh,
+Latest local results: **92 backend tests passed** (September 23, 2026), **20 frontend
+checks passed** (14 browser journeys and 6 pure logic checks across two viewport projects),
+and TypeScript/production build passed on September 23. Coverage includes quote retention across refresh,
 reload and save/reopen; flight comparison; empty/failed stays; and delayed cross-tab logout.
+Stay-map coverage also checks invalid coordinates, keyboard selection, failed photos,
+provider recovery and dialog focus wrapping/restoration.
 The repository CI definition includes browser and disposable PostgreSQL migration jobs;
 these local results do not imply a successful hosted GitHub Actions run.
 
@@ -175,7 +178,9 @@ connection string for `MIGRATION_DATABASE_URL`.
 `scripts/verify_postgres_migrations.py` verifies additive upgrades and preservation of
 legacy saved trips against a disposable, empty, localhost-only PostgreSQL database whose
 name starts with `wanderful_migration`. It refuses remote/nonempty targets. PostgreSQL 16
-verification passed locally; no hosted migration was applied.
+verification passed locally, including revision backfill with `20260923_07`; no hosted
+migration was applied. Apply reviewed migrations separately before restarting a PostgreSQL
+deployment with the new model. Legacy tool endpoints still require revision-contract migration.
 
 ## Generated files and repository hygiene
 

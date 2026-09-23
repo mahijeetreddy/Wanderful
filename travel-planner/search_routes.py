@@ -91,6 +91,9 @@ def make_search_blueprint(validate, limiter):
             trip = db.scalar(select(SavedTrip).where(SavedTrip.id == trip_id, SavedTrip.user_id == user_id).with_for_update())
             if not trip:
                 return jsonify({"error": "Trip not found."}), 404
+            if "expected_revision" in body:
+                from trip_mutations import check_revision
+                check_revision(trip, body["expected_revision"])
             currency = (trip.form_json or {}).get("currency_code", "USD")
             if offer.get("currency") != currency:
                 raise ValueError("Offer currency does not match this trip.")
@@ -102,6 +105,10 @@ def make_search_blueprint(validate, limiter):
                 if context.get(key) is not None and expected is not None and str(context[key]) != str(expected):
                     raise ValueError("Offer dates or traveler count do not match this trip. Run a matching search first.")
             selected = db.scalar(select(TripSelection).where(TripSelection.trip_id == trip_id, TripSelection.kind == kind))
+            from models import TripRecord
+            payments = db.scalars(select(TripRecord).where(TripRecord.trip_id == trip_id, TripRecord.kind == "expense")).all()
+            if selected and (state != "externally_booked" or body["snapshot_id"] != selected.snapshot_id) and any(row.payload.get("commitment_id") == "booking-" + kind for row in payments):
+                raise ValueError("This booking has linked payments. Review those payment records explicitly before changing booking status or selection.")
             if "expected_snapshot_id" in body and body["expected_snapshot_id"] != (selected.snapshot_id if selected else None):
                 return jsonify({"error": "This selection changed elsewhere. Reopen the trip before saving; your draft has not been applied."}), 409
             if not selected:
@@ -116,6 +123,8 @@ def make_search_blueprint(validate, limiter):
             structured["locked_flight_id" if kind == "flights" else "locked_hotel_id"] = offer["id"]
             trip.options_json = options
             trip.structured_json = _apply_locked_pricing(structured, options)
+            from models import utcnow
+            trip.updated_at = utcnow()
         from auth_store import get_saved_trip
         return jsonify({"trip": get_saved_trip(user_id, trip_id)})
 
