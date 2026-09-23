@@ -14,6 +14,17 @@ from runtime_store import rq_redis_client
 _local_executor = ThreadPoolExecutor(max_workers=max(1, int(__import__("os").getenv("PLAN_WORKERS", "2"))))
 
 
+def enqueue_search(search_id: str) -> None:
+    from search_service import execute_search
+    client = rq_redis_client()
+    if client:
+        Queue("planning", connection=client, default_timeout=120).enqueue(execute_search, search_id)
+    elif settings.production:
+        raise RuntimeError("REDIS_URL is required in production.")
+    else:
+        _local_executor.submit(execute_search, search_id)
+
+
 def enqueue_plan_job(job_id: str, travel_input_values: dict[str, Any]) -> str:
     client = rq_redis_client()
     if client:

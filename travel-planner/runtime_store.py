@@ -173,6 +173,7 @@ def update_plan_job_locks(
     *,
     locked_hotel_id: str | None = None,
     locked_flight_id: str | None = None,
+    snapshot_ids: list[str] | None = None,
 ) -> dict[str, Any] | None:
     with session_scope() as db:
         job = db.scalar(
@@ -181,6 +182,15 @@ def update_plan_job_locks(
         if not job or job.status != "complete" or not job.structured_json:
             return None
         structured = dict(job.structured_json)
+        from models import OfferSnapshot
+        options = dict(job.options_json or {})
+        for snapshot_id in (snapshot_ids or [])[:2]:
+            snapshot = db.scalar(select(OfferSnapshot).where(OfferSnapshot.id == snapshot_id, OfferSnapshot.user_id == user_id))
+            if not snapshot:
+                raise ValueError("Selected offer was not found in this account.")
+            offer = snapshot.offer
+            options[snapshot.kind] = [offer, *[item for item in options.get(snapshot.kind, []) if item["id"] != offer["id"]]]
+        job.options_json = options
         if locked_hotel_id is not None:
             structured["locked_hotel_id"] = locked_hotel_id
         if locked_flight_id is not None:

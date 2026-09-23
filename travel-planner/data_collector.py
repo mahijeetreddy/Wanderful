@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from main import TravelInputs
+from offers import classify_result, offer_metadata, stable_offer_id
 from ranking import rank_flights, rank_hotels, score_activity
 from reliability import increment_metric, provider_call
 from runtime_store import get_cached_response, set_cached_response
@@ -30,7 +31,7 @@ NEARBY_AIRPORTS: NearbyAirports = {
 }
 
 
-def collect_trip_data(travel_inputs: TravelInputs) -> dict[str, Any]:
+def collect_trip_data(travel_inputs: TravelInputs, on_partial: Any = None) -> dict[str, Any]:
     """Collect live provider data deterministically before CrewAI writes the plan."""
     flight_budget = _budget_slice(travel_inputs.budget, 0.35)
     nightly_hotel_budget = _nightly_budget(travel_inputs.budget, 0.38, travel_inputs.start_date, travel_inputs.end_date)
@@ -53,7 +54,7 @@ def collect_trip_data(travel_inputs: TravelInputs) -> dict[str, Any]:
                 departure_date=travel_inputs.start_date,
                 return_date=travel_inputs.end_date,
                 adults=travel_inputs.adults,
-                max_price=flight_budget,
+                max_price=None,
                 currency_code=travel_inputs.currency_code,
             ),
         ),
@@ -73,7 +74,7 @@ def collect_trip_data(travel_inputs: TravelInputs) -> dict[str, Any]:
                 check_in_date=travel_inputs.start_date,
                 check_out_date=travel_inputs.end_date,
                 adults=travel_inputs.adults,
-                nightly_budget=nightly_hotel_budget,
+                nightly_budget=None,
                 currency_code=travel_inputs.currency_code,
             ),
         ),
@@ -108,7 +109,7 @@ def collect_trip_data(travel_inputs: TravelInputs) -> dict[str, Any]:
             ),
         ),
     }
-    provider_results, collection_metrics = _run_provider_tasks_with_metrics(provider_tasks)
+    provider_results, collection_metrics = _run_provider_tasks_with_metrics(provider_tasks, on_partial)
     flight_result = str(provider_results["flights"])
     hotel_result = str(provider_results["hotels"])
     flight_options = normalize_flight_options(flight_result)
@@ -141,10 +142,11 @@ def collect_trip_data(travel_inputs: TravelInputs) -> dict[str, Any]:
     }
 
 
-def search_hotel_options_with_budget(travel_inputs: TravelInputs, nightly_budget: float) -> dict[str, Any]:
+def search_hotel_options_with_budget(travel_inputs: TravelInputs, nightly_budget: float | None, *, force_refresh: bool = False) -> dict[str, Any]:
     provider_result = _cached_provider_call(
         provider="hotels",
         ttl_seconds=3600,
+        bypass_cache=force_refresh,
         payload={
             "destination": travel_inputs.destination,
             "check_in_date": travel_inputs.start_date,
@@ -164,11 +166,11 @@ def search_hotel_options_with_budget(travel_inputs: TravelInputs, nightly_budget
     )
     hotels = normalize_hotel_options(str(provider_result))
     map_center = calculate_map_center(hotels)
-    hotels = rank_hotels(hotels, nightly_budget, travel_inputs.interests, map_center)
+    hotels = rank_hotels(hotels, nightly_budget or _nightly_budget(travel_inputs.budget, 0.38, travel_inputs.start_date, travel_inputs.end_date), travel_inputs.interests, map_center)
     return {
         "hotels": hotels,
         "map_center": map_center,
-        "message": f"Updated hotel options with a nightly budget near {travel_inputs.currency_code} {nightly_budget:.0f}.",
+        "message": "Stay options updated.",
         "provider_result": provider_result,
     }
 
@@ -278,7 +280,7 @@ def _run_provider_tasks(tasks: dict[str, Any]) -> dict[str, str]:
     return _run_provider_tasks_with_metrics(tasks)[0]
 
 
-def _run_provider_tasks_with_metrics(tasks: dict[str, Any]) -> tuple[dict[str, str], dict[str, Any]]:
+def _run_provider_tasks_with_metrics(tasks: dict[str, Any], on_partial: Any = None) -> tuple[dict[str, str], dict[str, Any]]:
     started = time.perf_counter()
     results: dict[str, str] = {}
     timings: dict[str, int] = {}
@@ -299,6 +301,8 @@ def _run_provider_tasks_with_metrics(tasks: dict[str, Any]) -> tuple[dict[str, s
                 results[name] = str(future.result())
             except Exception as exc:
                 results[name] = f"{name.replace('_', ' ').title()} failed: {exc}"
+            if on_partial:
+                on_partial(name, results[name])
     return results, {
         "provider_ms": timings,
         "total_ms": round((time.perf_counter() - started) * 1000),
@@ -306,9 +310,9 @@ def _run_provider_tasks_with_metrics(tasks: dict[str, Any]) -> tuple[dict[str, s
     }
 
 
-def _cached_provider_call(provider: str, ttl_seconds: int, payload: dict[str, Any], call: Any) -> str:
+def _cached_provider_call(provider: str, ttl_seconds: int, payload: dict[str, Any], call: Any, bypass_cache: bool = False) -> str:
     cache_key = _cache_key(provider, payload)
-    cached = get_cached_response(cache_key)
+    cached = None if bypass_cache else get_cached_response(cache_key)
     if isinstance(cached, str):
         increment_metric("cache_hits")
         return cached
@@ -343,7 +347,9 @@ def normalize_hotel_options(provider_result: str) -> list[dict[str, Any]]:
         coordinates = _normalize_coordinates(hotel.get("gps_coordinates"))
         normalized.append(
             {
-                "id": str(hotel.get("property_token") or f"hotel-{index + 1}"),
+                "id": stable_offer_id("hotel", [hotel.get("property_token") or [hotel.get("name"), coordinates], payload.get("search_context")]),
+                "provider_reference": hotel.get("property_token"),
+                **offer_metadata("hotel", payload),
                 "name": hotel.get("name") or "Unnamed hotel",
                 "description": hotel.get("description"),
                 "hotel_class": hotel.get("hotel_class"),
@@ -375,7 +381,9 @@ def normalize_flight_options(provider_result: str) -> list[dict[str, Any]]:
         flights = offer.get("flights") if isinstance(offer.get("flights"), list) else []
         normalized.append(
             {
-                "id": f"flight-{index + 1}",
+                "id": stable_offer_id("flight", [flights, payload.get("search_context")]),
+                "provider_reference": offer.get("booking_token") or offer.get("departure_token"),
+                **offer_metadata("flight", payload),
                 "total_price": offer.get("total_price"),
                 "currency": offer.get("currency"),
                 "total_duration_minutes": offer.get("total_duration_minutes"),
@@ -449,12 +457,13 @@ def calculate_map_center(hotels: list[dict[str, Any]]) -> dict[str, float] | Non
     }
 
 
-def search_flight_options_from_instruction(travel_inputs: TravelInputs, instruction: str) -> dict[str, Any]:
+def search_flight_options_from_instruction(travel_inputs: TravelInputs, instruction: str, *, force_refresh: bool = False) -> dict[str, Any]:
     adjusted = apply_flight_instruction(travel_inputs, instruction)
     flight_budget = _budget_slice(adjusted.budget, 0.35)
     provider_result = _cached_provider_call(
         provider="flights",
         ttl_seconds=1800,
+        bypass_cache=force_refresh,
         payload={
             "origin": adjusted.origin,
             "destination": adjusted.destination,
@@ -470,7 +479,7 @@ def search_flight_options_from_instruction(travel_inputs: TravelInputs, instruct
             departure_date=adjusted.start_date,
             return_date=adjusted.end_date,
             adults=adjusted.adults,
-            max_price=flight_budget,
+            max_price=None,
             currency_code=adjusted.currency_code,
         ),
     )

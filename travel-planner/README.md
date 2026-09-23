@@ -23,6 +23,25 @@ budget and interests, not generic suggestions.
 
 ## Status
 
+The product upgrade is currently in **Phase 2 (Flights and Stays)**. Phase 1's core
+selection and account-isolation journeys are verified, but the main reopened workspace
+still uses explicit Save rather than a universal revision-aware update of the original trip.
+Phases 3–5 remain pending. See [implementation status](docs/IMPLEMENTATION_STATUS.md)
+and the [product tour with screenshots](../README.md#product-tour).
+
+Implemented additions include independent provider status/retry, immutable server-owned
+offer snapshots, retained selected quotes on refresh, three-flight comparison, flight
+filters, outbound/return summaries with local arrival-day changes, and selectable hotel
+room-rate quotes. Missing room policies, taxes or totals are not invented. Selected,
+user-recorded externally booked, and paid are distinct concepts; choosing an offer does
+not reserve or purchase it.
+
+The remaining work includes map/accessibility audits, connected decision previews,
+transactional revisions, exact commitment/payment accounting, durable vault storage,
+account-scoped IndexedDB offline packs, and opt-in weather monitoring. Existing budget,
+offline, expense and disruption tools below are the current versions, not completion of
+those planned reliability upgrades. Groups are owner-managed; disruptions are user-triggered.
+
 Wanderful is in a controlled beta. New accounts require admin approval before
 planning is enabled. Prices and availability shown are time-sensitive results from
 third-party providers, not guarantees — Wanderful does not sell travel, own bookings,
@@ -31,12 +50,15 @@ with the relevant provider before you travel.
 
 ## Architecture
 
-- **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, Leaflet, and GSAP.
+- **Frontend:** React 18, TypeScript, TanStack Query, Vite, Tailwind CSS, Leaflet, and GSAP.
 - **API:** Flask with cookie sessions, CSRF protection, per-user rate limits, and JSON logging.
 - **Planning:** CrewAI/LiteLLM orchestration with structured itinerary validation.
 - **Persistence:** SQLAlchemy with local SQLite or PostgreSQL/Neon in hosted environments.
 - **Jobs:** RQ and Redis in production, with an in-process executor for local development only.
 - **Providers:** SerpAPI for travel/local search and OpenWeather for forecasts.
+- **Search state:** Account-owned search sessions and immutable offer snapshots; independent
+  provider polling and retries. Session epoch guards cancel/invalidate requests on logout.
+- **Feature modules:** `src/features/` separates auth/session, search, flights, stays and trip UI.
 
 ## Adaptive trip intelligence
 
@@ -96,6 +118,11 @@ npm ci
 Copy `.env.example` to `.env`, add the provider credentials you intend to use, and keep
 `APP_ENV=development`. The default SQLite URLs require no database service.
 
+The current `.env.example` is local-only and ignored; fresh clones may not contain it.
+Consult `config.py` and the environment-variable references in the provider modules for
+configuration, or obtain a sanitized template from the maintainer. Never share a populated
+environment file.
+
 Initialize the schema and start both development servers:
 
 ```bash
@@ -103,6 +130,8 @@ python -m alembic upgrade head
 python web_app.py
 npm run dev
 ```
+
+Run the API and Vite commands in separate terminals.
 
 The API listens on port 5052 and Vite listens on port 5173 by default.
 
@@ -116,7 +145,20 @@ python -m compileall -q .
 python scripts/check_infrastructure.py
 npm run typecheck
 npm run build
+npm run test:browser
 ```
+
+The Playwright configuration uses installed Google Chrome locally and Chromium in CI;
+CI installs it with `npx playwright install --with-deps chromium`. Browser checks start
+an isolated Vite server on port 5174 and mock provider/account APIs. They do not make
+bookings or measure live provider performance.
+
+Latest local results (September 22, 2026): **88 backend tests passed**, **16 frontend
+checks passed** (10 browser journeys and 6 pure logic checks across two viewport projects),
+and TypeScript/production build passed. Coverage includes quote retention across refresh,
+reload and save/reopen; flight comparison; empty/failed stays; and delayed cross-tab logout.
+The repository CI definition includes browser and disposable PostgreSQL migration jobs;
+these local results do not imply a successful hosted GitHub Actions run.
 
 The infrastructure check verifies database connectivity, the Alembic revision, and Redis
 read/write behavior. It is expected to fail when Redis is intentionally omitted locally.
@@ -129,6 +171,19 @@ and test `upgrade head` against a disposable database before applying it to a sh
 
 For Neon deployments, use the pooled connection string for `DATABASE_URL` and the direct
 connection string for `MIGRATION_DATABASE_URL`.
+
+`scripts/verify_postgres_migrations.py` verifies additive upgrades and preservation of
+legacy saved trips against a disposable, empty, localhost-only PostgreSQL database whose
+name starts with `wanderful_migration`. It refuses remote/nonempty targets. PostgreSQL 16
+verification passed locally; no hosted migration was applied.
+
+## Generated files and repository hygiene
+
+Environment files, runtime state, local databases and journals, dependencies, builds,
+coverage and Playwright reports are ignored. Curated README screenshots remain eligible
+for version control; routine selection/recovery test captures are ignored. Ignore rules
+do not remove files already tracked by Git. Keep credentials and personal trip/document
+data out of fixtures and screenshots.
 
 ## Production requirements
 

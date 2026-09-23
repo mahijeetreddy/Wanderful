@@ -1,5 +1,10 @@
 # Local AI coding assistant tooling/skill caches - not part of the project
 .agents/
+.codex/
 .claude/
 .goose/
 skills-lock.json
+
+# Repository-level local credentials (the app has its own ignore rules)
+.env
+.env.*

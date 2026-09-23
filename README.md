@@ -11,18 +11,32 @@ Wanderful turns a few trip details into a practical, day-by-day journey with liv
 Wanderful goes beyond generating a static itinerary. It gives travelers one place to plan, compare, coordinate, and respond to changes.
 
 - **AI itinerary planning:** Build a paced day-by-day plan around dates, budget, interests, and traveler needs.
-- **Live travel options:** Compare flights, stays, weather, local activities, prices, ratings, stops, and source freshness.
+- **Flights and stays workspace:** Filter flights, compare up to three options, inspect hotel details and choose provider-supplied room rates. Selected quotes retain their identity and original price when results refresh.
 - **Interactive route maps:** See each day's stops in order and understand how to move between them.
 - **Trip Health:** Detect timing, weather, budget, evidence, and resilience risks before they become problems.
-- **Budget Guardian:** Track planned, committed, and actual spending while protecting a configurable reserve.
+- **Budget Guardian:** Review budget estimates, expenses, and a configurable reserve. An exact commitment/payment ledger is planned.
 - **Disruption Autopilot:** Preview and apply safe itinerary repairs for rain, delays, fatigue, or budget pressure.
-- **Offline Companion:** Keep a versioned trip pack on the device for access when connectivity is unreliable.
+- **Offline Companion:** Prepare a local trip pack. Reliable offline reloads and account-scoped IndexedDB storage are part of the upcoming hardening work.
 - **Group expenses:** Split shared costs, track balances, and settle debts with a simple group workspace.
 - **Travel document vault:** Keep tickets, bookings, insurance, and identity documents attached to the trip.
 - **PDF export:** Download a concise itinerary for sharing or offline reference.
 - **Personal travel memory:** Save trips, preferences, locks, and feedback to improve future plans.
 
 ## Product tour
+
+### Compare flights and keep your chosen quote
+
+The workspace separates Overview, Flights, Stays, Itinerary, and Trip tools. Flight
+comparison supports up to three offers, with unknown prices and policies shown honestly.
+
+![Desktop flight comparison](travel-planner/artifacts/ui-audit/flight-comparison-desktop.png)
+
+Hotel property details expose available room rates. A selected rate is a saved quote,
+not a reservation; booking happens with the external provider.
+
+<img src="travel-planner/artifacts/ui-audit/selected-room-rate-mobile.png" alt="Selected hotel room rate on mobile" width="390" />
+
+These two captures use automated test fixtures, not current bookable inventory.
 
 ### See the day before you go
 
@@ -59,7 +73,7 @@ The trip command center combines budget monitoring, offline readiness, and disru
 
 ## Technology
 
-- React 18, TypeScript, Vite, Tailwind CSS, Leaflet, and GSAP
+- React 18, TypeScript, TanStack Query, Vite, Tailwind CSS, Leaflet, and GSAP
 - Flask API with secure cookie sessions, CSRF protection, rate limits, and structured logging
 - CrewAI and LiteLLM orchestration with validated structured itineraries
 - SQLAlchemy with SQLite locally and PostgreSQL/Neon in hosted environments
@@ -73,6 +87,27 @@ The application lives in [`travel-planner/`](travel-planner/). See the [applicat
 Repository-level deployment and CI definitions live in [`render.yaml`](render.yaml) and [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
 ## Status
+
+The five-phase product upgrade is underway, not complete:
+
+| Phase | Current state |
+| --- | --- |
+| 1. Trustworthy search and selection | Core journeys verified; universal saved-trip update flow remains |
+| 2. Flights and stays experience | In progress: comparison, filters, room-rate snapshots and flight-leg summaries implemented |
+| 3. Connected trip decisions | Pending |
+| 4. Operational reliability | Pending |
+| 5. Provider evaluation and weather monitoring | Pending |
+
+Local verification on September 22, 2026: **88 backend tests**, **16 frontend checks**
+(10 browser journeys and 6 pure logic checks across desktop/mobile projects), and a
+successful production build. These are fixture-based checks, not live-provider latency
+or availability guarantees. See [implementation status](travel-planner/docs/IMPLEMENTATION_STATUS.md)
+for evidence and remaining limitations.
+
+Reopened trips still require explicit Save in the main workspace; revision-aware updates
+of the original saved trip are not yet universal. Weather monitoring is not yet implemented;
+disruption recovery is user-triggered. Groups remain owner-managed, without invitations
+or shared editing.
 
 Wanderful is in controlled beta. New accounts require administrator approval before live planning is enabled. Provider prices and availability are time-sensitive and are not guarantees. Wanderful does not sell travel or process bookings; travelers should confirm booking terms, entry requirements, and final details with the relevant provider.
 

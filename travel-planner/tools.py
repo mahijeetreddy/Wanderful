@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 from collections import Counter, defaultdict
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Type
 
@@ -233,12 +233,17 @@ class FlightSearchTool(BaseTool):
                 params["return_date"] = return_date
 
             payload = _serpapi_get(params)
-            offers = payload.get("best_flights") or payload.get("other_flights") or []
+            offers = [*(payload.get("best_flights") or []), *(payload.get("other_flights") or [])]
             if not offers:
                 return "No flight offers found for the requested route and constraints."
 
             summaries: list[dict[str, Any]] = []
-            for offer in offers[:5]:
+            seen = set()
+            for offer in offers:
+                identity = json.dumps(offer.get("flights", []), sort_keys=True)
+                if identity in seen:
+                    continue
+                seen.add(identity)
                 price = offer.get("price")
                 if max_price is not None and isinstance(price, (int, float)) and price > max_price:
                     continue
@@ -270,7 +275,7 @@ class FlightSearchTool(BaseTool):
                         "reference": "Use the SerpAPI booking_token for booking options. Some Google Flights round-trip results require a departure_token step before return details are complete.",
                     }
                 )
-                if len(summaries) == 5:
+                if len(summaries) == 40:
                     break
 
             return _compact_json(
@@ -282,6 +287,8 @@ class FlightSearchTool(BaseTool):
                         "destination": {"input": destination, "resolved": resolved_destination},
                     },
                     "source": "SerpAPI Google Flights",
+                    "retrieved_at": datetime.now(timezone.utc).isoformat(),
+                    "search_context": {"origin": resolved_origin, "destination": resolved_destination, "start_date": departure_date, "end_date": return_date, "adults": adults, "currency_code": currency_code.upper()},
                     "search_metadata": payload.get("search_metadata", {}),
                     "price_insights": payload.get("price_insights", {}),
                     "offers": summaries,
@@ -519,6 +526,8 @@ class HotelSearchTool(BaseTool):
                 {
                     "destination": destination,
                     "source": "SerpAPI Google Hotels",
+                    "retrieved_at": datetime.now(timezone.utc).isoformat(),
+                    "search_context": {"destination": destination, "start_date": check_in_date, "end_date": check_out_date, "adults": adults, "currency_code": currency_code.upper()},
                     "search_metadata": payload.get("search_metadata", {}),
                     "hotels": summaries,
                 }

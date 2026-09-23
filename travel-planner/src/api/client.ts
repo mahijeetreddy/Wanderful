@@ -1,3 +1,5 @@
+import { registerRequest, sessionEpoch } from "../features/auth/session";
+
 export class ApiError extends Error {
   status: number;
   correlationId: string;
@@ -11,6 +13,13 @@ export class ApiError extends Error {
 }
 
 export async function apiFetch(path: string, init: RequestInit = {}) {
+  const epoch = sessionEpoch();
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  if (init.signal?.aborted) controller.abort();
+  init.signal?.addEventListener("abort", abort, { once: true });
+  const unregister = registerRequest(controller);
+  const cleanup = () => { unregister(); init.signal?.removeEventListener("abort", abort); };
   const headers = new Headers(init.headers || {});
   headers.set("Accept", "application/json");
   headers.set("X-Correlation-ID", crypto.randomUUID());
@@ -24,11 +33,33 @@ export async function apiFetch(path: string, init: RequestInit = {}) {
   if (path === "/api/plan-jobs" && method === "POST" && !headers.has("Idempotency-Key")) {
     headers.set("Idempotency-Key", crypto.randomUUID());
   }
-  return window.fetch(path, {
+  try {
+  const response = await window.fetch(path, {
     ...init,
     headers,
     credentials: "same-origin",
+    signal: controller.signal,
   });
+  const text = response.text.bind(response);
+  response.text = async () => {
+    try {
+      const result = await text();
+      if (epoch !== sessionEpoch() || controller.signal.aborted) throw new DOMException("Session changed", "AbortError");
+      return result;
+    } finally { cleanup(); }
+  };
+  response.json = async () => JSON.parse(await response.text());
+  const blob = response.blob.bind(response);
+  response.blob = async () => {
+    try {
+      const result = await blob();
+      if (epoch !== sessionEpoch() || controller.signal.aborted) throw new DOMException("Session changed", "AbortError");
+      return result;
+    } finally { cleanup(); }
+  };
+  if (epoch !== sessionEpoch()) throw new DOMException("Session changed", "AbortError");
+  return response;
+  } catch (error) { cleanup(); throw error; }
 }
 
 export async function readApiJson<T>(response: Response): Promise<T> {

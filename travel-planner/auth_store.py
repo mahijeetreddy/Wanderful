@@ -12,7 +12,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 from config import settings
 from database import Base, engine, ensure_local_column, session_scope
-from models import JournalEntry, PasswordResetToken, SavedTrip, TravelDocument, TripShare, User, UserPreference
+from models import JournalEntry, PasswordResetToken, SavedTrip, TravelDocument, TripShare, TripSelection, User, UserPreference
 from trip_intelligence import VALID_CONSTRAINTS, update_memory
 
 
@@ -127,7 +127,7 @@ def list_saved_trips(user_id: int) -> list[dict[str, Any]]:
         ).all()
         shares = db.scalars(select(TripShare).where(TripShare.user_id == user_id)).all()
         tokens_by_trip = {share.saved_trip_id: share.token for share in shares}
-        return [_trip_dict(trip, share_token=tokens_by_trip.get(trip.id)) for trip in trips]
+        return [{**_trip_dict(trip, share_token=tokens_by_trip.get(trip.id)), "selections": _selection_dicts(db, trip.id)} for trip in trips]
 
 
 def create_saved_trip(user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
@@ -172,7 +172,7 @@ def get_saved_trip(user_id: int, trip_id: int) -> dict[str, Any] | None:
         if not trip:
             return None
         share = db.scalar(select(TripShare).where(TripShare.saved_trip_id == trip_id))
-        return _trip_dict(trip, share_token=share.token if share else None)
+        return {**_trip_dict(trip, share_token=share.token if share else None), "selections": _selection_dicts(db, trip.id)}
 
 
 def update_trip_constraints(user_id: int, trip_id: int, constraints: dict[str, Any]) -> dict[str, Any] | None:
@@ -473,6 +473,12 @@ def _user_dict(user: User) -> dict[str, Any]:
         "approved_at": user.approved_at.isoformat() if user.approved_at else None,
         "created_at": user.created_at.isoformat() if user.created_at else None,
     }
+
+
+def _selection_dicts(db, trip_id: int) -> list[dict[str, Any]]:
+    return [{"kind": row.kind, "snapshot_id": row.snapshot_id, "status": row.status,
+             "booking_reference": row.booking_reference or "", "confirmation_source": "user_recorded"}
+            for row in db.scalars(select(TripSelection).where(TripSelection.trip_id == trip_id))]
 
 
 def _trip_dict(trip: SavedTrip, *, share_token: str | None = None) -> dict[str, Any]:

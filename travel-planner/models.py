@@ -50,6 +50,38 @@ class SavedTrip(Base):
     user: Mapped[User] = relationship()
 
 
+class SearchSession(Base):
+    __tablename__ = "search_sessions"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    context: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(20), default="queued")
+    result: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class OfferSnapshot(Base):
+    __tablename__ = "offer_snapshots"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    search_id: Mapped[str] = mapped_column(ForeignKey("search_sessions.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    offer: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class TripSelection(Base):
+    __tablename__ = "trip_selections"
+    __table_args__ = (UniqueConstraint("trip_id", "kind", name="uq_trip_selection_kind"),)
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    trip_id: Mapped[int] = mapped_column(ForeignKey("saved_trips.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    snapshot_id: Mapped[str] = mapped_column(ForeignKey("offer_snapshots.id"))
+    status: Mapped[str] = mapped_column(String(24), default="selected")
+    booking_reference: Mapped[str] = mapped_column(String(160), default="")
+
+
 class UserPreference(Base):
     __tablename__ = "user_preferences"
 

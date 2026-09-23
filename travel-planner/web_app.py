@@ -863,6 +863,7 @@ def update_plan_job_locks_route(job_id: str):
         user["id"],
         locked_hotel_id=payload.get("locked_hotel_id"),
         locked_flight_id=payload.get("locked_flight_id"),
+        snapshot_ids=payload.get("snapshot_ids") if isinstance(payload.get("snapshot_ids"), list) else [],
     )
     if not job:
         return jsonify({"error": "Plan job not found or not ready for locks."}), 404
@@ -901,7 +902,8 @@ def create_hotel_options():
     nightly_budget = float(_clean_text(payload.get("nightly_budget")) or 0)
     if nightly_budget <= 0:
         return jsonify({"error": "nightly_budget must be greater than zero."}), 400
-    return jsonify(search_hotel_options_with_budget(travel_inputs, nightly_budget))
+    from search_service import record_options
+    return jsonify(record_options(current_user()["id"], "hotels", travel_inputs.as_crew_inputs(), search_hotel_options_with_budget(travel_inputs, nightly_budget)))
 
 
 @app.post("/api/activity-options")
@@ -929,7 +931,9 @@ def create_flight_options():
     instruction = _clean_text(payload.get("instruction"))
     if not instruction:
         return jsonify({"error": "Missing required field: instruction."}), 400
-    return jsonify(search_flight_options_from_instruction(_validate_payload(payload), instruction))
+    from search_service import record_options
+    inputs = _validate_payload(payload)
+    return jsonify(record_options(current_user()["id"], "flights", inputs.as_crew_inputs(), search_flight_options_from_instruction(inputs, instruction)))
 
 
 @app.post("/api/flight-booking-options")
@@ -950,6 +954,28 @@ def create_flight_booking_options():
 @limiter.limit("20 per day")
 def create_flight_return_options():
     payload = _json_body()
+    if payload.get("snapshot_id"):
+        from search_service import read_offer, read_search, record_options
+        from offers import stable_offer_id
+        user_id = current_user()["id"]
+        outbound = read_offer(str(payload["snapshot_id"]), user_id)
+        if not outbound or outbound["kind"] != "flights":
+            return jsonify({"error": "Outbound offer not found."}), 404
+        result = fetch_return_flight_options(outbound.get("departure_token", ""), outbound.get("currency", "USD"))
+        completed = []
+        for inbound in result.get("return_options", []):
+            segments = [*(outbound.get("segments") or []), *(inbound.get("segments") or [])]
+            completed.append({**outbound, **inbound,
+                "id": stable_offer_id("flight", [segments, outbound.get("search_context")]),
+                "segments": segments,
+                "total_duration_minutes": outbound["total_duration_minutes"] + inbound["total_duration_minutes"] if isinstance(outbound.get("total_duration_minutes"), (int, float)) and isinstance(inbound.get("total_duration_minutes"), (int, float)) else None,
+                "outbound_duration_minutes": outbound.get("total_duration_minutes"),
+                "return_duration_minutes": inbound.get("total_duration_minutes"),
+                "layovers": [*(outbound.get("layovers") or []), *(inbound.get("layovers") or [])],
+                "has_return_details": True, "outbound_segment_count": len(outbound.get("segments") or [])})
+        search = read_search(outbound["search_id"], user_id)
+        saved = record_options(user_id, "flights", search["context"], {"flights": completed})
+        return jsonify({"return_options": saved["flights"]})
     return jsonify(
         fetch_return_flight_options(
             _clean_text(payload.get("departure_token")),
@@ -1085,6 +1111,10 @@ def _friendly_error(error: Exception) -> str:
     if "timeout" in lowered:
         return "An external provider timed out. Try again later."
     return str(error) if not settings.production else "An unexpected server error occurred."
+
+
+from search_routes import make_search_blueprint
+app.register_blueprint(make_search_blueprint(_validate_payload, limiter))
 
 
 if __name__ == "__main__":

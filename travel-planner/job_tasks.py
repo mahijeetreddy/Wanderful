@@ -5,7 +5,8 @@ import os
 from typing import Any
 
 from auth_store import get_user
-from data_collector import collect_trip_data
+from data_collector import collect_trip_data, normalize_flight_options, normalize_hotel_options, normalize_weather
+from offers import classify_result
 from email_service import send_plan_ready
 from guidebook_store import update_guidebook
 from itinerary_schema import StructuredItinerary
@@ -33,8 +34,32 @@ def execute_plan_job(job_id: str, travel_input_values: dict[str, Any]) -> None:
             status="collecting",
             progress="Collecting live provider data in parallel.",
         )
-        trip_data = collect_trip_data(travel_inputs)
+        partial_options: dict[str, Any] = {"flights": [], "hotels": [], "provider_status": {}}
+
+        def publish_provider(name: str, raw: str) -> None:
+            partial_options["provider_status"][name] = classify_result(raw)["status"]
+            if name == "flights":
+                partial_options["flights"] = normalize_flight_options(raw)
+            elif name == "hotels":
+                partial_options["hotels"] = normalize_hotel_options(raw)
+            elif name == "weather":
+                partial_options["weather"] = normalize_weather(raw)
+            if name in {"flights", "hotels"}:
+                from search_service import record_options
+                job_record = get_plan_job(job_id)
+                if job_record:
+                    recorded = record_options(job_record["user_id"], name, travel_input_values, {name: partial_options[name], "provider_result": raw})
+                    partial_options[name] = recorded[name]
+            update_plan_job(job_id, options=partial_options)
+
+        trip_data = collect_trip_data(travel_inputs, on_partial=publish_provider)
         options = trip_data.get("options", {})
+        for kind in ("flights", "hotels"):
+            snapshots = {item["id"]: item.get("snapshot_id") for item in partial_options.get(kind, [])}
+            for item in options.get(kind, []):
+                if item["id"] in snapshots:
+                    item["snapshot_id"] = snapshots[item["id"]]
+        options["provider_status"] = partial_options["provider_status"]
         update_plan_job(
             job_id,
             status="planning",

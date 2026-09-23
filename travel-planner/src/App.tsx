@@ -8,6 +8,12 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import "leaflet/dist/leaflet.css";
 import { apiFetch } from "./api/client";
+import { FlightOptionsPanel } from "./features/flights/FlightOptionsPanel";
+import { HotelMapPanel } from "./features/stays/HotelMapPanel";
+import { useTripWorkspace } from "./features/trips/useTripWorkspace";
+import { BookingSelections } from "./features/trips/BookingSelections";
+import { TripOverview } from "./features/trips/TripOverview";
+import { invalidateSession, observeSessionEnd, queryClient } from "./features/auth/session";
 import { AdminPanel } from "./features/admin/AdminPanel";
 import { PasswordResetModal } from "./features/auth/PasswordResetModal";
 import { GuidebookPanel } from "./features/guidebook/GuidebookPanel";
@@ -100,17 +106,13 @@ function App() {
   const plannerRef = useRef<HTMLElement | null>(null);
   const [heroVisible, setHeroVisible] = useState(false);
   const [bottomVisible, setBottomVisible] = useState(false);
-  const [form, setForm] = useState<PlannerForm>(initialForm);
+  const [cursorEnabled, setCursorEnabled] = useState(() => localStorage.getItem("wanderful.cursor-enabled") === "true");
+  const { form, setForm, itinerary, setItinerary, structuredItinerary, setStructuredItinerary, activePlanJobId, setActivePlanJobId, options, setOptions, resultTab, setResultTab } = useTripWorkspace(initialForm, emptyOptions);
   const [loading, setLoading] = useState(false);
   const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
   const [jobProgress, setJobProgress] = useState("");
   const [error, setError] = useState("");
-  const [itinerary, setItinerary] = useState("");
-  const [structuredItinerary, setStructuredItinerary] = useState<StructuredItineraryData | null>(null);
-  const [activePlanJobId, setActivePlanJobId] = useState<string | null>(null);
   const [regeneratingDay, setRegeneratingDay] = useState<number | null>(null);
-  const [options, setOptions] = useState<PlannerOptions>(emptyOptions);
-  const [resultTab, setResultTab] = useState<ResultTab>("itinerary");
   const [authResolved, setAuthResolved] = useState(false);
   const [hydratedScope, setHydratedScope] = useState<string | null>(null);
   const [savedTrips, setSavedTrips] = useState<SavedTrip[]>([]);
@@ -188,8 +190,8 @@ function App() {
         if (parsed.options) {
           setOptions(normalizeOptions(parsed.options));
         }
-        if (parsed.resultTab && ["itinerary", "hotels", "flights", "raw"].includes(parsed.resultTab)) {
-          setResultTab(parsed.resultTab);
+        if (parsed.resultTab && ["overview", "itinerary", "hotels", "flights", "tools", "raw"].includes(parsed.resultTab)) {
+          setResultTab(parsed.resultTab === "raw" ? "tools" : parsed.resultTab);
         }
         if (parsed.activePlanJobId) {
           setActivePlanJobId(parsed.activePlanJobId);
@@ -244,6 +246,7 @@ function App() {
   useEffect(() => {
     const videoBg = videoWrapRef.current;
     const presence = presenceRef.current;
+    if (itinerary || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     if (!videoBg) {
       return undefined;
     }
@@ -307,8 +310,9 @@ function App() {
       window.removeEventListener("mousemove", handleMove);
       window.removeEventListener("pointerdown", handlePointerDown);
       window.cancelAnimationFrame(frame);
+      gsap.set(videoBg, { x: 0, y: 0, clearProps: "filter" });
     };
-  }, []);
+  }, [Boolean(itinerary)]);
 
   useEffect(() => {
     if (!loading) {
@@ -419,7 +423,7 @@ function App() {
       const response = await apiFetch(`/api/plan-jobs/${activePlanJobId}/locks`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(locks),
+        body: JSON.stringify({ ...locks, snapshot_ids: [...options.flights, ...options.hotels].filter((item) => item.id === locks.locked_flight_id || item.id === locks.locked_hotel_id).map((item) => item.snapshot_id).filter(Boolean) }),
       });
       const payload = (await parsePlanResponse(response)) as PlanResponse & { job?: PlanJob };
       if (response.ok && payload.job?.structured_itinerary) {
@@ -503,16 +507,14 @@ function App() {
   };
 
   const handleStructuredItineraryChange = (next: StructuredItineraryData | null) => {
-    const hotelChanged = next?.locked_hotel_id !== structuredItinerary?.locked_hotel_id;
-    const flightChanged = next?.locked_flight_id !== structuredItinerary?.locked_flight_id;
     setStructuredItinerary(next);
-    if (next && (hotelChanged || flightChanged)) {
-      void persistPlanJobLocks({
-        ...(hotelChanged ? { locked_hotel_id: next.locked_hotel_id || "" } : {}),
-        ...(flightChanged ? { locked_flight_id: next.locked_flight_id || "" } : {}),
-      });
-    }
   };
+
+  useEffect(() => {
+    if (hydrated && !loading && activePlanJobId && structuredItinerary) {
+      void persistPlanJobLocks({ locked_hotel_id: structuredItinerary.locked_hotel_id || "", locked_flight_id: structuredItinerary.locked_flight_id || "" });
+    }
+  }, [hydrated, loading, activePlanJobId, structuredItinerary?.locked_hotel_id, structuredItinerary?.locked_flight_id, options.flights, options.hotels]);
 
   const copyItinerary = async () => {
     if (itinerary) {
@@ -660,7 +662,7 @@ function App() {
     setStructuredItinerary(trip.structuredItinerary || null);
     setActivePlanJobId(null);
     setOptions(normalizeOptions(trip.options));
-    setResultTab(trip.resultTab || "itinerary");
+    setResultTab(trip.resultTab === "raw" ? "tools" : trip.resultTab || "overview");
     setError("");
     setSavedTripsOpen(false);
     plannerRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -813,8 +815,10 @@ function App() {
   const refreshAuthUser = async () => {
     const requestEpoch = ++authRequestEpochRef.current;
     try {
-      const response = await apiFetch("/api/auth/me");
-      const payload = await parsePlanResponse(response) as PlanResponse & { user?: AuthUser | null };
+      const payload = await queryClient.fetchQuery({ queryKey: ["session", requestEpoch], queryFn: async ({ signal }) => {
+        const response = await apiFetch("/api/auth/me", { signal });
+        return await parsePlanResponse(response) as PlanResponse & { user?: AuthUser | null };
+      }, staleTime: 0 });
       if (requestEpoch === authRequestEpochRef.current) setAuthUser(payload.user || null);
     } catch {
       if (requestEpoch === authRequestEpochRef.current) setAuthUser(null);
@@ -846,6 +850,7 @@ function App() {
   };
 
   const logout = async () => {
+    invalidateSession(true);
     authRequestEpochRef.current += 1;
     const signedInScope = authUser ? workspaceStorageKey(authUser.id) : null;
     if (signedInScope) window.localStorage.removeItem(signedInScope);
@@ -866,9 +871,16 @@ function App() {
     }
   };
 
+  useEffect(() => observeSessionEnd(() => {
+    authRequestEpochRef.current += 1;
+    clearActiveTripState();
+    setSavedTrips([]); setAuthUser(null); setPreferences(null);
+    setHydratedScope(null); setAuthResolved(true); setProfileOpen(false); setSavedTripsOpen(false);
+  }), []);
+
   return (
     <div className="app-shell min-h-screen overflow-x-hidden bg-black text-white">
-      <FuturisticCursor />
+      {cursorEnabled ? <FuturisticCursor /> : null}
       <div ref={videoWrapRef} className="fixed inset-0 z-0 origin-center scale-[1.08]">
         <video
           ref={videoRef}
@@ -1119,6 +1131,9 @@ function App() {
                 canRegenerateDay={Boolean(activePlanJobId)}
                 regeneratingDay={regeneratingDay}
                 onRegenerateDay={regenerateDay}
+                onOpenSavedTools={() => setSavedTripsOpen(true)}
+                cursorEnabled={cursorEnabled}
+                onCursorChange={(enabled) => { setCursorEnabled(enabled); localStorage.setItem("wanderful.cursor-enabled", String(enabled)); }}
               />
             </section>
           )}
@@ -1141,6 +1156,7 @@ function App() {
         onOpenExpenses={setExpenseTrip}
         onOpenVault={setVaultTrip}
         onToggleShare={toggleTripSharing}
+        onTripUpdated={(updated) => setSavedTrips((current) => current.map((trip) => trip.id === updated.id ? updated : trip))}
       />
       <AuthModal
         open={authOpen}
@@ -1800,6 +1816,9 @@ function ItineraryResult({
   canRegenerateDay,
   regeneratingDay,
   onRegenerateDay,
+  onOpenSavedTools,
+  cursorEnabled,
+  onCursorChange,
 }: {
   form: PlannerForm;
   itinerary: string;
@@ -1812,13 +1831,17 @@ function ItineraryResult({
   canRegenerateDay: boolean;
   regeneratingDay: number | null;
   onRegenerateDay: (dayNumber: number) => void;
+  onOpenSavedTools: () => void;
+  cursorEnabled: boolean;
+  onCursorChange: (enabled: boolean) => void;
 }) {
   const tripLength = getTripLengthLabel(form.start_date, form.end_date);
   const resultTabs: Array<{ id: ResultTab; label: string; icon: ReactNode }> = [
-    { id: "itinerary", label: "Journey", icon: <Route size={17} /> },
-    { id: "hotels", label: "Stays", icon: <Building2 size={17} /> },
+    { id: "overview", label: "Overview", icon: <Compass size={17} /> },
     { id: "flights", label: "Flights", icon: <Plane size={17} /> },
-    { id: "raw", label: "Source", icon: <Braces size={17} /> },
+    { id: "hotels", label: "Stays", icon: <Building2 size={17} /> },
+    { id: "itinerary", label: "Itinerary", icon: <Route size={17} /> },
+    { id: "tools", label: "Trip tools", icon: <FolderLock size={17} /> },
   ];
 
   return (
@@ -1837,7 +1860,7 @@ function ItineraryResult({
           </div>
         </div>
 
-        <div role="tablist" aria-label="Trip workspace" className="result-tab-list mt-4 grid grid-cols-4 gap-1.5 rounded-[22px] p-1.5">
+        <div role="tablist" aria-label="Trip workspace" className="result-tab-list mt-4 flex gap-1.5 overflow-x-auto rounded-[22px] p-1.5 sm:grid sm:grid-cols-5">
             {resultTabs.map((tab) => (
               <button
                 key={tab.id}
@@ -1908,10 +1931,15 @@ function ItineraryResult({
         <div id="trip-panel-hotels" role="tabpanel" aria-labelledby="trip-tab-hotels"><HotelMapPanel
             form={form}
             hotels={options.hotels}
+            providerStatus={options.provider_status?.hotels}
             mapCenter={options.map_center}
-            lockedHotelId={structuredItinerary?.locked_hotel_id || structuredItinerary?.recommended_hotel_id || ""}
+            lockedHotelId={structuredItinerary?.locked_hotel_id || ""}
             onLockHotel={(hotelId) => onStructuredItineraryChange({ ...(structuredItinerary || {}), locked_hotel_id: hotelId })}
-            onHotelsUpdated={(hotels, mapCenter) => onOptionsChange({ ...options, hotels, map_center: mapCenter })}
+            onHotelsUpdated={(hotels, mapCenter) => {
+              const selectedId = structuredItinerary?.locked_hotel_id;
+              const selected = options.hotels.filter((hotel) => hotel.id === selectedId);
+              onOptionsChange({ ...options, hotels: [...selected, ...hotels.filter((hotel) => hotel.id !== selectedId)], map_center: mapCenter });
+            }}
           /></div>
       ) : null}
 
@@ -1919,16 +1947,21 @@ function ItineraryResult({
         <div id="trip-panel-flights" role="tabpanel" aria-labelledby="trip-tab-flights"><FlightOptionsPanel
             form={form}
             flights={options.flights}
+            providerStatus={options.provider_status?.flights}
             recovery={options.flight_recovery}
             priceInsights={options.price_insights || null}
-            lockedFlightId={structuredItinerary?.locked_flight_id || structuredItinerary?.recommended_flight_id || ""}
+            lockedFlightId={structuredItinerary?.locked_flight_id || ""}
             onLockFlight={(flightId) => onStructuredItineraryChange({ ...(structuredItinerary || {}), locked_flight_id: flightId })}
+            onFlightsUpdated={(flights) => onOptionsChange({ ...options, flights })}
           /></div>
       ) : null}
 
-      {activeTab === "raw" ? (
-        <SourcePanel itinerary={itinerary} />
-      ) : null}
+      {activeTab === "overview" ? <div id="trip-panel-overview" role="tabpanel" aria-labelledby="trip-tab-overview"><TripOverview form={form} options={options} itinerary={structuredItinerary} onNavigate={onTabChange} /></div> : null}
+      {activeTab === "tools" || activeTab === "raw" ? <div id="trip-panel-tools" role="tabpanel" aria-labelledby="trip-tab-tools" className="space-y-4 p-5">
+        <section className="rounded-3xl border border-amber-200/20 bg-amber-200/5 p-5"><h3 className="text-xl text-white">Everything for the journey</h3><p className="mt-2 text-sm text-white/65">Open a saved trip for booking status, group expenses, documents and offline packs.</p><button type="button" onClick={onOpenSavedTools} className="mt-4 min-h-11 rounded-full border border-amber-200/30 px-5 text-sm text-amber-100">Open saved-trip tools</button></section>
+        <label className="flex min-h-11 items-center gap-3 rounded-2xl border border-white/10 p-4 text-sm text-white/75"><input type="checkbox" checked={cursorEnabled} onChange={(event) => onCursorChange(event.target.checked)} className="h-4 w-4 accent-[#72d7dc]" />Enable decorative cursor</label>
+        <details className="rounded-2xl border border-white/10 p-4 text-sm text-white/70"><summary className="min-h-11 cursor-pointer content-center">Original plan & sources</summary><SourcePanel itinerary={itinerary} /></details>
+      </div> : null}
     </div>
   );
 }
@@ -1969,262 +2002,6 @@ function SourcePanel({ itinerary }: { itinerary: string }) {
   );
 }
 
-function HotelMapPanel({
-  form,
-  hotels,
-  mapCenter,
-  lockedHotelId,
-  onLockHotel,
-  onHotelsUpdated,
-}: {
-  form: PlannerForm;
-  hotels: HotelOption[];
-  mapCenter: Coordinates | null;
-  lockedHotelId: string;
-  onLockHotel: (hotelId: string) => void;
-  onHotelsUpdated: (hotels: HotelOption[], mapCenter: Coordinates | null) => void;
-}) {
-  const [selectedHotelId, setSelectedHotelId] = useState(hotels[0]?.id || "");
-  const mapShellRef = useRef<HTMLDivElement | null>(null);
-  const [nightlyBudget, setNightlyBudget] = useState(() => inferInitialNightlyBudget(form));
-  const [hotelStatus, setHotelStatus] = useState("");
-  const [hotelStatusIsError, setHotelStatusIsError] = useState(false);
-  const [hotelLoading, setHotelLoading] = useState(false);
-  const hotelsWithCoordinates = hotels.filter((hotel) => hotel.coordinates);
-  const selectedHotel = hotels.find((hotel) => hotel.id === selectedHotelId) || hotels[0];
-  const center = selectedHotel?.coordinates || mapCenter || hotelsWithCoordinates[0]?.coordinates || { lat: 39.5, lng: -98.35 };
-
-  useEffect(() => {
-    setSelectedHotelId(hotels[0]?.id || "");
-  }, [hotels]);
-
-  const selectHotel = (hotelId: string) => {
-    setSelectedHotelId(hotelId);
-    mapShellRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  };
-
-  const refreshHotels = async () => {
-    setHotelLoading(true);
-    setHotelStatus("");
-    setHotelStatusIsError(false);
-    try {
-      const response = await apiFetch("/api/hotel-options", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...form, nightly_budget: nightlyBudget }),
-      });
-      const payload = await parsePlanResponse(response) as PlanResponse & {
-        hotels?: HotelOption[];
-        map_center?: Coordinates | null;
-        message?: string;
-      };
-      if (!response.ok) {
-        throw new Error(payload.error || "Could not update hotel options.");
-      }
-      const nextHotels = Array.isArray(payload.hotels) ? payload.hotels : [];
-      onHotelsUpdated(nextHotels, payload.map_center || null);
-      setHotelStatus(payload.message || "Hotel options updated.");
-    } catch (caught) {
-      setHotelStatus(caught instanceof Error ? caught.message : "Could not update hotel options.");
-      setHotelStatusIsError(true);
-    } finally {
-      setHotelLoading(false);
-    }
-  };
-
-  if (!hotels.length) {
-    return (
-      <EmptyResult
-        icon={<Building2 size={18} />}
-        title="No hotel options available"
-        text="The hotel provider did not return structured hotel options for this trip. Try a broader destination, higher budget, or different dates."
-      />
-    );
-  }
-
-  return (
-    <div className="grid gap-5 p-4 sm:p-5 lg:grid-cols-[0.92fr_1.08fr]">
-      <div className="max-h-[760px] space-y-3 overflow-auto pr-1">
-        <div className="rounded-[28px] border border-[#3fb6c4]/12 bg-[radial-gradient(circle_at_20%_0%,rgba(63,182,196,0.16),transparent_34%),rgba(0,0,0,0.68)] p-5 shadow-[0_22px_70px_rgba(0,0,0,0.28)]">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-[#72d7dc]">Stays</p>
-              <h4 className="mt-1 text-2xl font-medium tracking-[-0.04em] text-white">Choose your base</h4>
-            </div>
-            <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-[#3fb6c4] text-[#06181a] shadow-[0_0_38px_rgba(63,182,196,0.18)]">
-              <Building2 size={20} />
-            </div>
-          </div>
-          <div className="mt-4 rounded-[22px] border border-[#3fb6c4]/10 bg-[#0e1518]/35 p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/42">Up to per night</p>
-                <p className="mt-1 text-lg font-medium text-white">{form.currency_code || "USD"} {nightlyBudget}</p>
-              </div>
-              <button
-                type="button"
-                onClick={refreshHotels}
-                disabled={hotelLoading}
-                className="inline-flex items-center gap-2 rounded-full bg-[#3fb6c4] px-4 py-2.5 text-sm font-medium text-[#06181a] transition hover:scale-[1.01] disabled:opacity-60"
-              >
-                {hotelLoading ? <Loader2 className="animate-spin" size={14} /> : <Search size={14} />}
-                Search
-              </button>
-            </div>
-            <input
-              type="range"
-              min="50"
-              max="1200"
-              step="25"
-              value={nightlyBudget}
-              onChange={(event) => setNightlyBudget(Number(event.target.value))}
-              className="mt-4 w-full accent-white"
-            />
-            <div className="mt-2 flex justify-between text-[11px] text-white/38">
-              <span>{form.currency_code || "USD"} 50</span>
-              <span>{form.currency_code || "USD"} 1200+</span>
-            </div>
-            {hotelStatus ? (
-              <p className={`mt-3 text-sm leading-relaxed ${hotelStatusIsError ? "text-red-300/85" : "text-white/56"}`}>
-                {hotelStatus}
-              </p>
-            ) : null}
-          </div>
-        </div>
-        {hotels.map((hotel, hotelIndex) => (
-          <article
-            key={hotel.id}
-            onClick={(event) => {
-              selectHotel(hotel.id);
-              event.currentTarget.scrollIntoView({ behavior: "smooth", block: "center" });
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                selectHotel(hotel.id);
-                event.currentTarget.scrollIntoView({ behavior: "smooth", block: "center" });
-              }
-            }}
-            role="button"
-            tabIndex={0}
-            style={{ animationDelay: `${Math.min(hotelIndex, 8) * 45}ms` }}
-            className={`hotel-option-card stay-card card-hover card-enter group w-full cursor-pointer rounded-[26px] border p-4 text-left focus:outline-none focus:ring-2 focus:ring-[#3fb6c4]/30 ${
-              selectedHotel?.id === hotel.id
-                ? "stay-card-selected border-[#3fb6c4]/60 bg-[#3fb6c4]/[0.16]"
-                : "border-[#3fb6c4]/12 bg-[#0e1518]/58 hover:border-[#3fb6c4]/28 hover:bg-[#3fb6c4]/[0.08]"
-            }`}
-          >
-            {hotel.image_thumbnail ? (
-              <img
-                src={hotel.image_thumbnail}
-                alt={hotel.name}
-                loading="lazy"
-                className="mb-4 h-44 w-full rounded-[20px] border border-[#3fb6c4]/10 object-cover transition duration-500 group-hover:scale-[1.01]"
-              />
-            ) : null}
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#72d7dc]">{hotel.rank ? `Choice ${hotel.rank}` : hotel.hotel_class || "Stay"}</p>
-                <p className="mt-1 text-xl font-medium leading-tight text-white">{hotel.name}</p>
-              </div>
-              <div className="flex flex-col items-end gap-2">
-                {hotel.nightly_rate ? <span className="text-lg font-semibold text-white">{hotel.nightly_rate}<span className="ml-1 text-[10px] font-normal uppercase text-white/35">night</span></span> : null}
-                {hotel.rank_score ? <span className="rounded-full bg-[#3fb6c4] px-2.5 py-1 text-[11px] font-semibold text-[#06181a]">{hotel.rank_score}% fit</span> : null}
-              </div>
-            </div>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {hotel.rating ? <HotelMetric label="Rating" value={`${hotel.rating}${hotel.reviews ? ` (${hotel.reviews})` : ""}`} /> : null}
-              {hotel.estimated_total ? <HotelMetric label="Est. total" value={`${hotel.currency || ""} ${hotel.estimated_total}`} /> : null}
-              {hotel.coordinates ? <HotelMetric label="Map" value="Ready" /> : null}
-            </div>
-            {hotel.amenities?.length ? (
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                {hotel.amenities.slice(0, 4).map((amenity) => (
-                  <span key={amenity} className="rounded-full border border-[#3fb6c4]/10 bg-[#0e1518]/20 px-2.5 py-1 text-[11px] text-white/62">
-                    {amenity}
-                  </span>
-                ))}
-              </div>
-            ) : null}
-            <div className="mt-4 flex flex-wrap gap-2"><button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                onLockHotel(lockedHotelId === hotel.id ? "" : hotel.id);
-              }}
-              className={`rounded-full px-3 py-1.5 text-sm transition ${
-                lockedHotelId === hotel.id ? "bg-[#3fb6c4] text-[#06181a]" : "border border-[#3fb6c4]/12 bg-[#3fb6c4]/[0.06] text-white/72 hover:bg-[#3fb6c4]/12"
-              }`}
-            >
-              {lockedHotelId === hotel.id ? "Selected" : "Choose stay"}
-            </button>
-            {hotel.link ? (
-              <a
-                href={hotel.link}
-                target="_blank"
-                rel="noreferrer"
-                onClick={(event) => event.stopPropagation()}
-                className="inline-flex items-center gap-1.5 rounded-full border border-[#3fb6c4]/12 bg-[#3fb6c4]/[0.08] px-3 py-1.5 text-sm text-white/78 transition hover:bg-[#3fb6c4] hover:text-[#06181a]"
-              >
-                View hotel <ExternalLink size={12} />
-              </a>
-            ) : null}
-            </div>
-          </article>
-        ))}
-      </div>
-
-      <div ref={mapShellRef} className="hotel-map-shell relative overflow-hidden rounded-[34px] border border-[#3fb6c4]/14 bg-[#0e1518]/60 shadow-[0_32px_110px_rgba(0,0,0,0.44)]">
-        <div className="pointer-events-none absolute inset-x-0 top-0 z-[500] h-28 bg-gradient-to-b from-black/70 to-transparent" />
-        <div className="pointer-events-none absolute left-4 right-4 top-4 z-[501] flex flex-wrap items-start justify-between gap-3">
-          <div className="rounded-2xl border border-[#3fb6c4]/12 bg-[#0e1518]/72 px-4 py-3 backdrop-blur-md">
-            <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/50">Map</p>
-            <p className="mt-1 text-sm font-medium text-white">{hotelsWithCoordinates.length} stay{hotelsWithCoordinates.length === 1 ? "" : "s"}</p>
-          </div>
-          {selectedHotel ? (
-            <div className="max-w-[320px] rounded-2xl border border-[#3fb6c4]/12 bg-[#0e1518]/72 px-4 py-3 text-right backdrop-blur-md">
-              <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/45">Selected Stay</p>
-              <p className="mt-1 truncate text-sm font-medium text-white">{selectedHotel.name}</p>
-              <p className="mt-1 text-xs text-white/55">{formatHotelMeta(selectedHotel)}</p>
-            </div>
-          ) : null}
-        </div>
-        {hotelsWithCoordinates.length ? (
-          <MapContainer center={[center.lat, center.lng]} zoom={12} scrollWheelZoom className="hotel-map">
-            <TileLayer
-              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-              url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
-            />
-            <MapRecenter center={center} />
-            {hotelsWithCoordinates.map((hotel) => {
-              const coordinates = hotel.coordinates as Coordinates;
-              const selected = hotel.id === selectedHotel?.id;
-              return (
-                <Marker
-                  key={hotel.id}
-                  position={[coordinates.lat, coordinates.lng]}
-                  icon={selected ? selectedHotelMarker : hotelMarker}
-                  eventHandlers={{ click: () => selectHotel(hotel.id) }}
-                >
-                  <Popup>
-                    <strong>{hotel.name}</strong>
-                    <br />
-                    {formatHotelMeta(hotel)}
-                  </Popup>
-                </Marker>
-              );
-            })}
-          </MapContainer>
-        ) : (
-          <EmptyResult
-            icon={<MapPin size={18} />}
-            title="Map unavailable for these hotel results"
-            text="SerpAPI did not include coordinates for the returned hotels. The cards are still available, and no paid geocoding API was called."
-          />
-        )}
-      </div>
-    </div>
-  );
-}
 
 function StatPill({ label, value }: { label: string; value: string }) {
   return (
@@ -2317,590 +2094,7 @@ function MapRecenter({ center }: { center: Coordinates }) {
   return null;
 }
 
-function FlightOptionsPanel({
-  form,
-  flights,
-  recovery,
-  priceInsights,
-  lockedFlightId,
-  onLockFlight,
-}: {
-  form: PlannerForm;
-  flights: FlightOption[];
-  recovery: FlightRecoverySuggestion[];
-  priceInsights: PriceInsights | null;
-  lockedFlightId: string;
-  onLockFlight: (flightId: string) => void;
-}) {
-  const [instruction, setInstruction] = useState("");
-  const [currentFlights, setCurrentFlights] = useState(flights);
-  const [currentRecovery, setCurrentRecovery] = useState(recovery);
-  const [currentPriceInsights, setCurrentPriceInsights] = useState(priceInsights);
-  const [status, setStatus] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [selectedFlight, setSelectedFlight] = useState<FlightOption | null>(null);
-  const [flightSearch, setFlightSearch] = useState({
-    origin: form.origin,
-    destination: form.destination,
-    start_date: form.start_date,
-    end_date: form.end_date,
-  });
 
-  useEffect(() => {
-    setCurrentFlights(flights);
-    setCurrentRecovery(recovery);
-    setCurrentPriceInsights(priceInsights);
-    setInstruction("");
-    setStatus("");
-    setFlightSearch({
-      origin: form.origin,
-      destination: form.destination,
-      start_date: form.start_date,
-      end_date: form.end_date,
-    });
-  }, [flights, recovery, priceInsights, form.origin, form.destination, form.start_date, form.end_date]);
-
-  const searchAlternates = async (nextInstruction: string, overrides = flightSearch) => {
-    const cleaned = nextInstruction.trim();
-    setLoading(true);
-    setStatus("");
-    try {
-      const response = await apiFetch("/api/flight-options", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...form,
-          ...overrides,
-          instruction: cleaned || "manual flight search",
-        }),
-      });
-      const payload = await parsePlanResponse(response) as PlanResponse & {
-        flights?: FlightOption[];
-        recovery_suggestions?: FlightRecoverySuggestion[];
-        message?: string;
-        price_insights?: PriceInsights | null;
-      };
-      if (!response.ok) {
-        throw new Error(payload.error || "Flight search failed.");
-      }
-      setCurrentFlights(payload.flights || []);
-      setCurrentRecovery(payload.recovery_suggestions || []);
-      setCurrentPriceInsights(payload.price_insights || null);
-      setStatus(payload.message || "Updated flight options.");
-    } catch (caught) {
-      setStatus(caught instanceof Error ? caught.message : "Flight search failed.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="grid gap-5 p-4 sm:p-5 lg:grid-cols-[1fr_360px]">
-      <div className="space-y-3">
-        <div className="rounded-[28px] border border-[#3fb6c4]/12 bg-[radial-gradient(circle_at_12%_0%,rgba(63,182,196,0.16),transparent_36%),rgba(0,0,0,0.68)] p-5 shadow-[0_22px_70px_rgba(0,0,0,0.28)]">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-[#72d7dc]">Flights</p>
-              <h4 className="mt-1 text-2xl font-medium tracking-[-0.04em] text-white">
-                {flightSearch.origin || "Origin"} to {flightSearch.destination || "Destination"}
-              </h4>
-            </div>
-            <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-[#3fb6c4] text-[#06181a] shadow-[0_0_38px_rgba(63,182,196,0.18)]">
-              <Plane size={20} />
-            </div>
-          </div>
-          <div className="mt-4 grid grid-cols-3 gap-2">
-            <StatPill label="Options" value={String(currentFlights.length)} />
-            <StatPill label="Depart" value={formatDate(flightSearch.start_date)} />
-            <StatPill label="Return" value={formatDate(flightSearch.end_date)} />
-          </div>
-          {currentPriceInsights?.typical_price_range ? (
-            <p className="mt-3 text-xs text-white/50">
-              Typical price for this route: {form.currency_code || "USD"} {currentPriceInsights.typical_price_range[0]}-{currentPriceInsights.typical_price_range[1]}
-              {currentPriceInsights.price_level ? ` (currently ${currentPriceInsights.price_level})` : ""}
-            </p>
-          ) : null}
-        </div>
-
-        {currentFlights.length ? (
-          currentFlights.map((flight, flightIndex) => (
-            <article
-              key={flight.id}
-              onClick={(event) => {
-                setSelectedFlight(flight);
-                event.currentTarget.scrollIntoView({ behavior: "smooth", block: "center" });
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  setSelectedFlight(flight);
-                  event.currentTarget.scrollIntoView({ behavior: "smooth", block: "center" });
-                }
-              }}
-              role="button"
-              tabIndex={0}
-              style={{ animationDelay: `${Math.min(flightIndex, 8) * 45}ms` }}
-              className="flight-option-card flight-ticket card-hover card-enter block w-full cursor-pointer overflow-hidden rounded-[28px] border border-[#3fb6c4]/12 bg-[#0e1518]/70 p-5 text-left shadow-[0_20px_70px_rgba(0,0,0,0.28)] hover:border-[#3fb6c4]/28 focus:outline-none focus:ring-2 focus:ring-[#3fb6c4]/30"
-            >
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/40">
-                    {flight.rank ? `Choice ${flight.rank}` : `Flight ${flightIndex + 1}`}
-                  </p>
-                  <p className="mt-1 text-3xl font-medium tracking-[-0.05em] text-white">{formatFlightPrice(flight)}</p>
-                  <div className="mt-2 flex flex-wrap gap-2 text-xs text-white/62">
-                    <span className="rounded-full border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.07] px-3 py-1.5">{formatFlightDuration(flight.total_duration_minutes)}</span>
-                    <span className="rounded-full border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.07] px-3 py-1.5">
-                      {flight.has_return_details ? "Round trip" : "Outbound shown"}
-                    </span>
-                    <span className="rounded-full border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.07] px-3 py-1.5">{getFlightAirlines(flight)}</span>
-                    {flight.rank_score ? <span className="rounded-full bg-[#3fb6c4] px-3 py-1.5 font-semibold text-[#06181a]">{flight.rank_score} match</span> : null}
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-5 space-y-2">
-                {(flight.segments || []).slice(0, 2).map((segment, index) => {
-                  const segments = flight.segments || [];
-                  const layover = flight.layovers?.[index];
-                  const isLast = index === segments.length - 1;
-                  return (
-                    <div key={`${flight.id}-${index}`}>
-                      <div className="flight-segment-row rounded-[22px] border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.055] p-4">
-                        <div className="flex items-center gap-3">
-                          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#3fb6c4] text-[#06181a]">
-                            <Plane size={16} />
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <p className="font-medium text-white">{segment.from || "?"} <span className="mx-1 text-[#72d7dc]">→</span> {segment.to || "?"}</p>
-                              {segment.flight_number ? <span className="rounded-full bg-[#0e1518]/35 px-2 py-0.5 text-[11px] text-white/48">{segment.flight_number}</span> : null}
-                            </div>
-                            <p className="mt-1 text-sm text-white/54">
-                              {formatFlightDateTime(segment.depart_at)}{segment.arrive_at ? ` – ${formatFlightDateTime(segment.arrive_at)}` : ""} · {segment.airline || "Airline"}
-                            </p>
-                          </div>
-                          <p className="hidden rounded-full border border-[#3fb6c4]/10 bg-[#0e1518]/30 px-3 py-1 text-xs text-white/52 sm:block">
-                            {formatFlightDuration(segment.duration_minutes)}
-                          </p>
-                        </div>
-                      </div>
-                      {!isLast && layover ? (
-                        <div className="ml-5 flex items-center gap-2 border-l border-dashed border-[#3fb6c4]/15 py-2 pl-4 text-[11px] text-amber-100/70">
-                          <Clock size={12} />
-                          <span>
-                            Layover{layover.name ? ` in ${layover.name}` : layover.id ? ` at ${layover.id}` : ""}
-                            {layover.duration ? ` - ${formatFlightDuration(layover.duration)}` : ""}
-                            {layover.overnight ? " (overnight)" : ""}
-                          </span>
-                        </div>
-                      ) : null}
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[#3fb6c4]/10 pt-4">
-                {flight.carbon_emissions?.difference_percent != null ? <p className="text-xs text-white/42">CO₂ {Math.abs(flight.carbon_emissions.difference_percent)}% {flight.carbon_emissions.difference_percent < 0 ? "below" : "above"} typical</p> : <span/>}
-                <a
-                  href={buildGoogleFlightsUrl(flightSearch)}
-                  target="_blank"
-                  rel="noreferrer"
-                  onClick={(event) => event.stopPropagation()}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-[#3fb6c4]/12 bg-[#3fb6c4]/[0.08] px-3 py-1.5 text-sm text-white/78 transition hover:bg-[#3fb6c4] hover:text-[#06181a]"
-                >
-                  Open Google Flights <ExternalLink size={13} />
-                </a>
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onLockFlight(lockedFlightId === flight.id ? "" : flight.id);
-                  }}
-                  className={`rounded-full px-3 py-1.5 text-sm transition ${
-                    lockedFlightId === flight.id ? "bg-[#3fb6c4] text-[#06181a]" : "border border-[#3fb6c4]/12 bg-[#3fb6c4]/[0.08] text-white/78 hover:bg-[#3fb6c4] hover:text-[#06181a]"
-                  }`}
-                >
-                  {lockedFlightId === flight.id ? "Selected" : "Choose flight"}
-                </button>
-              </div>
-            </article>
-          ))
-        ) : (
-          <EmptyResult
-            icon={<Plane size={18} />}
-            title="No flight options returned"
-            text="Try nearby dates or airports."
-          />
-        )}
-      </div>
-
-      <aside className="space-y-3">
-        <div className="rounded-[26px] border border-[#3fb6c4]/12 bg-[#0e1518]/68 p-4 shadow-[0_18px_60px_rgba(0,0,0,0.24)]">
-          <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/60">Flight search controls</p>
-          <div className="mt-3 grid gap-3">
-            <FlightControlField
-              label="Origin"
-              value={flightSearch.origin}
-              placeholder="LAX or Los Angeles"
-              onChange={(value) => setFlightSearch((current) => ({ ...current, origin: value }))}
-            />
-            <FlightControlField
-              label="Destination"
-              value={flightSearch.destination}
-              placeholder="SJC or San Jose"
-              onChange={(value) => setFlightSearch((current) => ({ ...current, destination: value }))}
-            />
-            <div className="grid grid-cols-2 gap-3">
-              <FlightControlField
-                type="date"
-                label="Depart"
-                value={flightSearch.start_date}
-                onChange={(value) => setFlightSearch((current) => ({ ...current, start_date: value }))}
-              />
-              <FlightControlField
-                type="date"
-                label="Return"
-                value={flightSearch.end_date}
-                onChange={(value) => setFlightSearch((current) => ({ ...current, end_date: value }))}
-              />
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => searchAlternates("manual flight search", flightSearch)}
-            disabled={loading}
-            className="mt-3 flex w-full items-center justify-center gap-2 rounded-full bg-[#3fb6c4] px-4 py-3 text-sm font-medium text-[#06181a] transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {loading ? <Loader2 className="animate-spin" size={15} /> : <Search size={15} />}
-            Check these flights
-          </button>
-        </div>
-
-        <div className="rounded-[26px] border border-[#3fb6c4]/12 bg-[#0e1518]/68 p-4 shadow-[0_18px_55px_rgba(0,0,0,0.2)]">
-          <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/50">Try another search</p>
-          <textarea
-            value={instruction}
-            onChange={(event) => setInstruction(event.target.value)}
-            rows={4}
-            placeholder="Leave two days earlier or try a nearby airport."
-            className="mt-3 w-full resize-none rounded-2xl border border-[#3fb6c4]/16 bg-[#0e1518]/68 p-3 text-sm text-white outline-none placeholder:text-white/42 focus:border-[#3fb6c4]/42"
-          />
-          <button
-            type="button"
-            onClick={() => searchAlternates(instruction, flightSearch)}
-            disabled={loading || !instruction.trim()}
-            className="mt-3 flex w-full items-center justify-center gap-2 rounded-full bg-[#3fb6c4] px-4 py-3 text-sm font-medium text-[#06181a] transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {loading ? <Loader2 className="animate-spin" size={15} /> : <Search size={15} />}
-            Search alternate flights
-          </button>
-          {status ? <p className="mt-3 text-sm leading-relaxed text-white/58">{status}</p> : null}
-        </div>
-
-        {currentRecovery.length ? (
-          <div className="rounded-[26px] border border-[#3fb6c4]/12 bg-[#0e1518]/68 p-4 shadow-[0_18px_55px_rgba(0,0,0,0.2)]">
-            <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/50">Suggestions</p>
-            <div className="mt-3 space-y-2">
-              {currentRecovery.map((suggestion) => (
-                <button
-                  key={`${suggestion.type}-${suggestion.instruction}`}
-                  type="button"
-                  onClick={() => {
-                    setInstruction(suggestion.instruction);
-                    void searchAlternates(suggestion.instruction, flightSearch);
-                  }}
-                  className="w-full rounded-2xl border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.055] px-3 py-2 text-left text-sm leading-relaxed text-white/72 transition hover:border-[#3fb6c4]/24 hover:bg-[#3fb6c4]/[0.11] hover:text-white"
-                >
-                  {suggestion.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null}
-      </aside>
-
-      <FlightDetailModal
-        flight={selectedFlight}
-        currencyCode={form.currency_code}
-        search={flightSearch}
-        onClose={() => setSelectedFlight(null)}
-      />
-    </div>
-  );
-}
-
-function FlightDetailModal({
-  flight,
-  currencyCode,
-  search,
-  onClose,
-}: {
-  flight: FlightOption | null;
-  currencyCode: string;
-  search: { origin: string; destination: string; start_date: string; end_date: string };
-  onClose: () => void;
-}) {
-  const [bookingOptions, setBookingOptions] = useState<FlightBookingOption[]>([]);
-  const [returnOptions, setReturnOptions] = useState<FlightOption[]>([]);
-  const [activeFlight, setActiveFlight] = useState<FlightOption | null>(flight);
-  const [bookingStatus, setBookingStatus] = useState("");
-  const [returnStatus, setReturnStatus] = useState("");
-  const [selectedReturnId, setSelectedReturnId] = useState("");
-  const [loadingBookings, setLoadingBookings] = useState(false);
-  const [loadingReturns, setLoadingReturns] = useState(false);
-  useEscapeToClose(Boolean(flight), onClose);
-
-  useEffect(() => {
-    if (flight) {
-      setActiveFlight(flight);
-    }
-    setBookingOptions([]);
-    setBookingStatus("");
-    setReturnOptions([]);
-    setReturnStatus("");
-    setSelectedReturnId("");
-  }, [flight?.id]);
-
-  if (!flight || !activeFlight) {
-    return null;
-  }
-
-  const loadBookingOptions = async () => {
-    if (!activeFlight.booking_token) {
-      setBookingStatus("Open Google Flights to continue.");
-      return;
-    }
-    setLoadingBookings(true);
-    setBookingStatus("");
-    try {
-      const response = await apiFetch("/api/flight-booking-options", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ booking_token: activeFlight.booking_token, currency_code: currencyCode || "USD" }),
-      });
-      const payload = await parsePlanResponse(response) as {
-        booking_options?: FlightBookingOption[];
-        error?: string;
-      };
-      if (!response.ok) {
-        throw new Error(payload.error || "Could not load booking options.");
-      }
-      setBookingOptions(Array.isArray(payload.booking_options) ? payload.booking_options : []);
-      setBookingStatus(
-        payload.booking_options?.length
-          ? "Booking options ready."
-          : "No direct booking links found. Open Google Flights to continue."
-      );
-    } catch (caught) {
-      setBookingStatus(caught instanceof Error ? caught.message : "Could not load booking options.");
-    } finally {
-      setLoadingBookings(false);
-    }
-  };
-
-  const loadReturnOptions = async () => {
-    if (!activeFlight.departure_token) {
-      setReturnStatus("Open Google Flights to choose the return.");
-      return;
-    }
-    setLoadingReturns(true);
-    setReturnStatus("");
-    setBookingOptions([]);
-    setBookingStatus("");
-    try {
-      const response = await apiFetch("/api/flight-return-options", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ departure_token: activeFlight.departure_token, currency_code: currencyCode || "USD" }),
-      });
-      const payload = await parsePlanResponse(response) as {
-        return_options?: FlightOption[];
-        error?: string;
-      };
-      if (!response.ok) {
-        throw new Error(payload.error || "Could not load return flight options.");
-      }
-      const options = Array.isArray(payload.return_options) ? payload.return_options : [];
-      setReturnOptions(options);
-      setReturnStatus(
-        options.length
-          ? "Choose a return below."
-          : "No return choices found. Open Google Flights to continue."
-      );
-      if (options.length === 1) {
-        setActiveFlight(mergeFlightLegs(flight, options[0]));
-        setSelectedReturnId(options[0].id);
-      }
-    } catch (caught) {
-      setReturnStatus(caught instanceof Error ? caught.message : "Could not load return flight options.");
-    } finally {
-      setLoadingReturns(false);
-    }
-  };
-
-  const selectReturnOption = (option: FlightOption) => {
-    setActiveFlight(mergeFlightLegs(flight, option));
-    setSelectedReturnId(option.id);
-    setBookingOptions([]);
-    setBookingStatus(option.booking_token ? "Return selected. Booking options are ready to load." : "Return selected, but no booking token was returned.");
-  };
-
-  return (
-    <div className="fixed inset-0 z-[90] grid place-items-center bg-[#0e1518]/70 px-4 backdrop-blur-md" onClick={onClose}>
-      <article
-        className="max-h-[88vh] w-[min(94vw,920px)] overflow-auto rounded-[34px] border border-[#3fb6c4]/16 bg-[linear-gradient(145deg,rgba(22,22,22,0.97),rgba(6,6,6,0.96))] p-6 shadow-[0_34px_120px_rgba(0,0,0,0.62)] sm:p-8"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/45">Flight Details</p>
-            <h3 className="mt-2 text-3xl font-medium tracking-[-0.05em] text-white sm:text-5xl">{formatFlightPrice(activeFlight)}</h3>
-            <div className="mt-3 flex flex-wrap gap-2 text-xs text-white/66">
-              <span className="rounded-full border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.07] px-3 py-1.5">{formatFlightDuration(activeFlight.total_duration_minutes)}</span>
-              <span className="rounded-full border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.07] px-3 py-1.5">{getFlightAirlines(activeFlight)}</span>
-              <span className="rounded-full border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.07] px-3 py-1.5">
-                {activeFlight.has_return_details ? "Return details included" : "Return selection may still be required"}
-              </span>
-            </div>
-          </div>
-          <button type="button" onClick={onClose} className="rounded-full border border-[#3fb6c4]/12 bg-[#3fb6c4]/8 px-3 py-2 text-sm text-white/72 hover:bg-[#3fb6c4]/14">
-            Close
-          </button>
-        </div>
-
-        {!activeFlight.has_return_details ? (
-          <div className="mb-5 rounded-[24px] border border-amber-200/18 bg-amber-200/[0.08] p-4">
-            <p className="text-sm font-medium text-white">Return not selected</p>
-            <p className="mt-1 text-sm text-white/62">Choose a return or continue on Google Flights.</p>
-          </div>
-        ) : null}
-
-        <div className="grid gap-3">
-          {(activeFlight.segments || []).map((segment, index) => (
-            <div key={`${activeFlight.id}-modal-${index}`} className="rounded-[24px] border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.055] p-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="text-lg font-medium text-white">{segment.airline || "Airline"} {segment.flight_number || ""}</p>
-                  <p className="mt-1 text-sm text-white/56">
-                    {segment.from || "?"} to {segment.to || "?"} - {segment.depart_at || "departure TBD"}
-                    {segment.arrive_at ? ` to ${segment.arrive_at}` : ""}
-                  </p>
-                </div>
-                <span className="rounded-full border border-[#3fb6c4]/10 bg-[#0e1518]/30 px-3 py-1.5 text-xs text-white/58">
-                  {formatFlightDuration(segment.duration_minutes)}
-                </span>
-              </div>
-              <div className="mt-3 flex flex-wrap gap-2 text-xs text-white/48">
-                {segment.airplane ? <span className="rounded-full bg-[#0e1518]/30 px-3 py-1">{segment.airplane}</span> : null}
-                {segment.travel_class ? <span className="rounded-full bg-[#0e1518]/30 px-3 py-1">{segment.travel_class}</span> : null}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <div className="mt-6 grid gap-3 sm:grid-cols-3">
-          <button
-            type="button"
-            onClick={loadReturnOptions}
-            disabled={loadingReturns || activeFlight.has_return_details || !activeFlight.departure_token}
-            className="inline-flex items-center justify-center gap-2 rounded-full border border-[#3fb6c4]/12 bg-[#3fb6c4]/[0.08] px-4 py-3 text-sm font-medium text-white/82 transition hover:bg-[#3fb6c4] hover:text-[#06181a] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {loadingReturns ? <Loader2 className="animate-spin" size={15} /> : <RotateCcw size={15} />}
-            Select return flight
-          </button>
-          <button
-            type="button"
-            onClick={loadBookingOptions}
-            disabled={loadingBookings || !activeFlight.booking_token}
-            className="inline-flex items-center justify-center gap-2 rounded-full bg-[#3fb6c4] px-4 py-3 text-sm font-medium text-[#06181a] transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {loadingBookings ? <Loader2 className="animate-spin" size={15} /> : <Search size={15} />}
-            Load booking options
-          </button>
-          <a
-            href={buildGoogleFlightsUrl(search)}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center justify-center gap-2 rounded-full border border-[#3fb6c4]/12 bg-[#3fb6c4]/[0.08] px-4 py-3 text-sm font-medium text-white/82 transition hover:bg-[#3fb6c4] hover:text-[#06181a]"
-          >
-            Open Google Flights <ExternalLink size={15} />
-          </a>
-        </div>
-
-
-        {returnStatus ? <p className="mt-4 text-sm leading-relaxed text-white/58">{returnStatus}</p> : null}
-
-        {returnOptions.length ? (
-          <div className="mt-4 rounded-[26px] border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.04] p-4">
-            <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">Return flight options</p>
-            <div className="mt-3 grid gap-3">
-              {returnOptions.map((option) => (
-                <button
-                  key={option.id}
-                  type="button"
-                  onClick={() => selectReturnOption(option)}
-                  className={`rounded-[22px] border p-4 text-left transition ${
-                    selectedReturnId === option.id
-                      ? "border-[#3fb6c4]/50 bg-[#3fb6c4]/[0.12]"
-                      : "border-[#3fb6c4]/10 bg-[#0e1518]/24 hover:border-[#3fb6c4]/24 hover:bg-[#3fb6c4]/[0.08]"
-                  }`}
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <p className="text-base font-medium text-white">{getFlightAirlines(option)}</p>
-                      <p className="mt-1 text-sm text-white/56">
-                        {formatFlightDuration(option.total_duration_minutes)} - {formatFlightPrice(option)}
-                      </p>
-                    </div>
-                    <span className="rounded-full border border-[#3fb6c4]/10 bg-[#0e1518]/30 px-3 py-1 text-xs text-white/58">
-                      {option.booking_token ? "Provider continuation ready" : "Provider continuation unavailable"}
-                    </span>
-                  </div>
-                  <div className="mt-3 space-y-2">
-                    {(option.segments || []).map((segment, index) => (
-                      <p key={`${option.id}-segment-${index}`} className="rounded-2xl border border-[#3fb6c4]/10 bg-[#0e1518]/24 px-3 py-2 text-sm text-white/58">
-                        <span className="text-white/82">{segment.airline || "Airline"}</span> - {segment.from || "?"} to {segment.to || "?"} - {segment.depart_at || "departure TBD"}
-                      </p>
-                    ))}
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null}
-
-        {bookingStatus ? <p className="mt-4 text-sm leading-relaxed text-white/58">{bookingStatus}</p> : null}
-
-        {bookingOptions.length ? (
-          <div className="mt-4 grid gap-3">
-            {bookingOptions.map((option) => (
-              <article key={option.id} className="rounded-[22px] border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.055] p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <p className="text-base font-medium text-white">{option.title}</p>
-                    {option.description ? <p className="mt-1 text-sm leading-relaxed text-white/54">{option.description}</p> : null}
-                  </div>
-                  {option.price ? <span className="rounded-full bg-[#3fb6c4] px-3 py-1 text-xs font-semibold text-[#06181a]">{option.currency || activeFlight.currency || currencyCode} {option.price}</span> : null}
-                </div>
-                {option.extensions?.length ? (
-                  <div className="mt-3 flex flex-wrap gap-1.5">
-                    {option.extensions.slice(0, 6).map((extension) => (
-                      <span key={extension} className="rounded-full border border-[#3fb6c4]/10 bg-[#0e1518]/25 px-2.5 py-1 text-[11px] text-white/58">{extension}</span>
-                    ))}
-                  </div>
-                ) : null}
-                {option.link ? (
-                  <a href={option.link} target="_blank" rel="noreferrer" className="mt-4 inline-flex items-center gap-1.5 rounded-full border border-[#3fb6c4]/12 bg-[#3fb6c4]/[0.08] px-3 py-1.5 text-sm text-white/78 transition hover:bg-[#3fb6c4] hover:text-[#06181a]">
-                    Continue to provider <ExternalLink size={13} />
-                  </a>
-                ) : null}
-              </article>
-            ))}
-          </div>
-        ) : null}
-      </article>
-    </div>
-  );
-}
 
 function EmptyResult({ icon, title, text }: { icon: ReactNode; title: string; text: string }) {
   return (
@@ -2926,6 +2120,7 @@ function SavedTripsDrawer({
   onOpenExpenses,
   onOpenVault,
   onToggleShare,
+  onTripUpdated,
 }: {
   open: boolean;
   trips: SavedTrip[];
@@ -2940,6 +2135,7 @@ function SavedTripsDrawer({
   onOpenExpenses: (trip: SavedTrip) => void;
   onOpenVault: (trip: SavedTrip) => void;
   onToggleShare: (tripId: string) => void;
+  onTripUpdated: (trip: SavedTrip) => void;
 }) {
   useEscapeToClose(open, onClose);
   const [copiedTripId, setCopiedTripId] = useState<string | null>(null);
@@ -3014,6 +2210,7 @@ function SavedTripsDrawer({
                     Delete
                   </button>
                 </div>
+                {accountMode ? <BookingSelections trip={trip} onUpdated={onTripUpdated} /> : null}
                 {accountMode ? (
                   <div className="mt-3 grid grid-cols-2 gap-2">
                     <button
@@ -3853,6 +3050,7 @@ function normalizeOptions(options?: PlannerOptions): PlannerOptions {
     map_center: options?.map_center || null,
     price_insights: options?.price_insights || null,
     weather: options?.weather || null,
+    provider_status: options?.provider_status || {},
   };
 }
 

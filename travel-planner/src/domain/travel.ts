@@ -76,7 +76,7 @@ export type StructuredItineraryData = {
   validation_warnings?: string[];
 };
 
-export type ResultTab = "itinerary" | "hotels" | "flights" | "raw";
+export type ResultTab = "overview" | "itinerary" | "hotels" | "flights" | "tools" | "raw";
 
 export type PriceInsights = {
   lowest_price?: number | null;
@@ -99,6 +99,7 @@ export type WeatherInfo = {
 };
 
 export type PlannerOptions = {
+  provider_status?: Record<string, ProviderStatus>;
   hotels: HotelOption[];
   flights: FlightOption[];
   flight_recovery: FlightRecoverySuggestion[];
@@ -112,7 +113,40 @@ export type Coordinates = {
   lng: number;
 };
 
+export type ProviderStatus = "queued" | "searching" | "success" | "empty" | "unavailable" | "timeout" | "error";
+export type SearchSession = {
+  id: string;
+  kind: "flights" | "hotels";
+  status: ProviderStatus;
+  context: Record<string, unknown>;
+  flights?: FlightOffer[];
+  hotels?: HotelOffer[];
+  map_center?: Coordinates | null;
+  message?: string;
+};
+export type FlightOffer = FlightOption;
+export type HotelOffer = HotelOption;
+export type TripSelection = {
+  snapshot_id: string;
+  kind: "flights" | "hotels";
+  status: "selected" | "externally_booked";
+  booking_reference?: string;
+};
+
 export type HotelOption = {
+  property_id?: string;
+  room_type?: string | null;
+  rate_source?: string | null;
+  rate_inclusions?: string[];
+  price_amount?: string;
+  price_basis?: string;
+  completeness?: { status: "complete" | "partial"; missing_fields: string[] };
+  snapshot_id?: string;
+  provider_reference?: string | null;
+  retrieved_at?: string | null;
+  stale_after?: string | null;
+  freshness?: "snapshot" | "historical";
+  search_context?: Record<string, unknown>;
   id: string;
   name: string;
   description?: string | null;
@@ -160,6 +194,16 @@ export type CarbonEmissions = {
 };
 
 export type FlightOption = {
+  outbound_duration_minutes?: number | null;
+  return_duration_minutes?: number | null;
+  outbound_segment_count?: number;
+  completeness?: { status: "complete" | "partial"; missing_fields: string[] };
+  snapshot_id?: string;
+  provider_reference?: string | null;
+  retrieved_at?: string | null;
+  stale_after?: string | null;
+  freshness?: "snapshot" | "historical";
+  search_context?: Record<string, unknown>;
   id: string;
   total_price?: number | string | null;
   currency?: string | null;
@@ -201,6 +245,7 @@ export type DayPlan = {
 };
 
 export type SavedTrip = {
+  selections?: TripSelection[];
   id: string;
   name: string;
   destination: string;

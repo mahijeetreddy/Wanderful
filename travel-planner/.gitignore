@@ -1,7 +1,7 @@
 # Environment and secrets
 .env
 .env.*
-!.env.example
+# Keep the existing local template private until its contents are reviewed.
 .env.example
 *.key
 *.pem
@@ -28,11 +28,25 @@ env/
 .mypy_cache/
 .ruff_cache/
 .coverage
+.coverage.*
+coverage.xml
+coverage/
 htmlcov/
 .cache/
 
 # Node / frontend
 node_modules/
+test-results/
+playwright-report/
+playwright/.cache/
+blob-report/
+# Generated UI captures; retain curated screenshots referenced by the README.
+artifacts/ui-audit/flight-comparison-*.png
+!artifacts/ui-audit/flight-comparison-desktop.png
+artifacts/ui-audit/selected-room-rate-*.png
+!artifacts/ui-audit/selected-room-rate-mobile.png
+artifacts/ui-audit/selection-persistence*.png
+artifacts/ui-audit/stay-recovery-*.png
 dist/
 *.tsbuildinfo
 vite.config.js
@@ -61,6 +75,15 @@ Thumbs.db
 *.db
 *.sqlite
 *.sqlite3
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3-journal
 chroma/
 chroma_db/
 qdrant_storage/
