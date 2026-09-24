@@ -7,14 +7,19 @@ import { apiFetch, readApiJson } from "../../api/client";
 import type { Coordinates, StructuredActivityData, StructuredDayData } from "../../domain/travel";
 
 type RouteStop = { index: number; title: string; location: string; coordinates: Coordinates; source_id?: string; source_url?: string };
+function validPoint(point?: Coordinates | null): point is Coordinates {
+  return !!point && Number.isFinite(point.lat) && Number.isFinite(point.lng) && Math.abs(point.lat) <= 90 && Math.abs(point.lng) <= 180;
+}
 
-export function RouteMapPanel({ destination, days, mapCenter }: { destination: string; days: StructuredDayData[]; mapCenter: Coordinates | null }) {
+export function RouteMapPanel({ destination, days, mapCenter, onResolved }: { destination: string; days: StructuredDayData[]; mapCenter: Coordinates | null; onResolved?: (day: number, stops: RouteStop[]) => void }) {
   const [dayNumber, setDayNumber] = useState(days[0]?.day_number || 1);
   const [stops, setStops] = useState<RouteStop[]>([]);
   const [unresolved, setUnresolved] = useState(0);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const cache = useRef(new Map<string, { stops: RouteStop[]; unresolved: number }>());
+  const resolvedCallback = useRef(onResolved);
+  resolvedCallback.current = onResolved;
   const day = days.find((item) => item.day_number === dayNumber) || days[0];
   const activities = useMemo(() => (day?.activities || []).slice(0, 8), [day]);
 
@@ -30,11 +35,13 @@ export function RouteMapPanel({ destination, days, mapCenter }: { destination: s
       setUnresolved(cached.unresolved);
       return;
     }
-    const embedded = activities.flatMap((activity, index) => activity.coordinates ? [{
+    const embedded = activities.flatMap((activity, index) => activity.source_id && activity.source_url && validPoint(activity.coordinates) ? [{
       index,
       title: activity.title,
       location: activity.location || activity.title,
       coordinates: activity.coordinates,
+      source_id: activity.source_id,
+      source_url: activity.source_url,
     }] : []);
     if (embedded.length === activities.length) {
       cache.current.set(cacheKey, { stops: embedded, unresolved: 0 });
@@ -54,10 +61,12 @@ export function RouteMapPanel({ destination, days, mapCenter }: { destination: s
     })
       .then((response) => readApiJson<{ stops: RouteStop[]; unresolved: number }>(response))
       .then((payload) => {
-        const result = { stops: payload.stops || [], unresolved: payload.unresolved || 0 };
+        const valid = (payload.stops || []).filter(stop => validPoint(stop.coordinates) && stop.source_id && stop.source_url);
+        const result = { stops: valid, unresolved: activities.length - valid.length };
         cache.current.set(cacheKey, result);
         setStops(result.stops);
         setUnresolved(result.unresolved);
+        if (valid.some(stop => activities[stop.index]?.source_id !== stop.source_id || JSON.stringify(activities[stop.index]?.coordinates) !== JSON.stringify(stop.coordinates))) resolvedCallback.current?.(day.day_number, valid);
         if (!result.stops.length) setMessage("Map coordinates are unavailable. Open the route in Maps instead.");
       })
       .catch((error) => {

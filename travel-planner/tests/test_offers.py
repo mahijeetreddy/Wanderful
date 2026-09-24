@@ -83,14 +83,14 @@ def test_saved_booking_is_user_recorded_not_payment_and_rejects_stale_selection(
     trip = create_saved_trip(user["id"], {"name": "Lisbon", "destination": "Lisbon", "dateRange": "May", "itinerary": "Trip", "form": {"currency_code": "USD"}})
     result = record_options(user["id"], "hotels", {}, {"hotels": [{"id": "stay", "currency": "USD", "estimated_total": 420}]})
     snapshot_id = result["hotels"][0]["snapshot_id"]
-    response = client.put(f"/api/trips/{trip['id']}/selection", json={"snapshot_id": snapshot_id, "status": "externally_booked", "booking_reference": "CONFIRM123", "expected_snapshot_id": None})
+    response = client.put(f"/api/trips/{trip['id']}/selection", json={"snapshot_id": snapshot_id, "status": "externally_booked", "booking_reference": "CONFIRM123", "expected_snapshot_id": None, "expected_revision": trip["revision"]})
     assert response.status_code == 200
     saved = get_saved_trip(user["id"], int(trip["id"]))
     assert saved["selections"][0]["confirmation_source"] == "user_recorded"
     assert saved["selections"][0]["booking_reference"] == "CONFIRM123"
     assert saved["budgetState"] == {}
     assert list_saved_trips(user["id"])[0]["selections"] == saved["selections"]
-    stale = client.put(f"/api/trips/{trip['id']}/selection", json={"snapshot_id": snapshot_id, "expected_snapshot_id": None})
+    stale = client.put(f"/api/trips/{trip['id']}/selection", json={"snapshot_id": snapshot_id, "expected_snapshot_id": None, "expected_revision": trip["revision"]})
     assert stale.status_code == 409
     paid = client.put(f"/api/trips/{trip['id']}/selection", json={"snapshot_id": snapshot_id, "status": "paid"})
     assert paid.status_code == 400

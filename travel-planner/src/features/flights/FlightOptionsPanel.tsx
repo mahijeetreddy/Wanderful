@@ -1,4 +1,5 @@
 import { FlightJourney } from "./FlightJourney";
+import { recordHandoff } from "../search/handoff";
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { AlertTriangle, ArrowDown, ArrowRight, BookOpen, Bookmark, Braces, Building2, CalendarDays, Check, CircleUserRound, Clock, Cloud, CloudFog, CloudLightning, CloudRain, CloudSnow, Compass, Copy, Download, ExternalLink, FileText, FolderLock, ListChecks, Loader2, Lock, MapPin, Plane, ReceiptText, RotateCcw, Route, Search, Share2, Sparkles, Sun, Users, Wallet } from "lucide-react";
@@ -505,6 +506,7 @@ function FlightDetailModal({
           </button>
           <a
             href={buildGoogleFlightsUrl(search)}
+            onClick={() => recordHandoff(activeFlight.snapshot_id)}
             target="_blank"
             rel="noreferrer"
             className="inline-flex items-center justify-center gap-2 rounded-full border border-[#3fb6c4]/12 bg-[#3fb6c4]/[0.08] px-4 py-3 text-sm font-medium text-white/82 transition hover:bg-[#3fb6c4] hover:text-[#06181a]"

@@ -37,6 +37,16 @@ def make_search_blueprint(validate, limiter):
         offer = read_offer(snapshot_id, current_user()["id"])
         return (jsonify({"offer": offer}), 200) if offer else (jsonify({"error": "Offer not found."}), 404)
 
+    @bp.post("/api/offers/<snapshot_id>/handoff")
+    @require_active_user
+    @limiter.limit("120 per hour")
+    def handoff(snapshot_id):
+        from reliability import increment_metric
+        offer = read_offer(snapshot_id, current_user()["id"])
+        if not offer: return jsonify({"error": "Offer not found."}), 404
+        increment_metric("handoff_" + offer["kind"])
+        return jsonify({"recorded": True})
+
     @bp.post("/api/offers/<snapshot_id>/recheck")
     @require_active_user
     @limiter.limit("20 per day")
@@ -77,12 +87,13 @@ def make_search_blueprint(validate, limiter):
     def select_offer(trip_id):
         from runtime_store import _apply_locked_pricing
         body = request.get_json(silent=True) or {}
+        if not isinstance(body, dict): raise ValueError("Request body must be an object.")
         user_id = current_user()["id"]
         offer = read_offer(str(body.get("snapshot_id", "")), user_id)
         if not offer:
             return jsonify({"error": "Offer not found."}), 404
         state = body.get("status", "selected")
-        if state not in {"selected", "externally_booked"}:
+        if not isinstance(state, str) or state not in {"selected", "externally_booked"}:
             raise ValueError("Payments must be recorded separately from selections.")
         kind = offer.pop("kind")
         if kind == "flights" and not offer.get("has_return_details"):
@@ -91,16 +102,15 @@ def make_search_blueprint(validate, limiter):
             trip = db.scalar(select(SavedTrip).where(SavedTrip.id == trip_id, SavedTrip.user_id == user_id).with_for_update())
             if not trip:
                 return jsonify({"error": "Trip not found."}), 404
-            if "expected_revision" in body:
-                from trip_mutations import check_revision
-                check_revision(trip, body["expected_revision"])
+            from trip_mutations import check_revision
+            check_revision(trip, body.get("expected_revision"))
             currency = (trip.form_json or {}).get("currency_code", "USD")
             if offer.get("currency") != currency:
                 raise ValueError("Offer currency does not match this trip.")
             snapshot = db.get(OfferSnapshot, body["snapshot_id"])
             original = read_search(snapshot.search_id, user_id)
             context = original["context"] if original else {}
-            for key in ("start_date", "end_date", "adults"):
+            for key in ("origin", "destination", "start_date", "end_date", "adults"):
                 expected = (trip.form_json or {}).get(key)
                 if context.get(key) is not None and expected is not None and str(context[key]) != str(expected):
                     raise ValueError("Offer dates or traveler count do not match this trip. Run a matching search first.")
@@ -111,6 +121,9 @@ def make_search_blueprint(validate, limiter):
                 raise ValueError("This booking has linked payments. Review those payment records explicitly before changing booking status or selection.")
             if "expected_snapshot_id" in body and body["expected_snapshot_id"] != (selected.snapshot_id if selected else None):
                 return jsonify({"error": "This selection changed elsewhere. Reopen the trip before saving; your draft has not been applied."}), 409
+            from auth_store import _trip_dict
+            from models import TripHistory
+            db.add(TripHistory(trip_id=trip.id, revision=trip.revision, payload=_trip_dict(trip)))
             if not selected:
                 selected = TripSelection(id=uuid.uuid4().hex, trip_id=trip_id, kind=kind)
                 db.add(selected)

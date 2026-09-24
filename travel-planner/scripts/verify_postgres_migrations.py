@@ -52,7 +52,7 @@ def main():
         assert row["options_json"] == historical
         assert row["budget_state_json"] == expenses
         assert connection.execute(text("select revision from saved_trips where id = :trip_id"), {"trip_id": trip_id}).scalar_one() == 1
-    assert {"search_sessions", "offer_snapshots", "trip_selections"} <= set(inspect(engine).get_table_names())
+    assert {"search_sessions", "offer_snapshots", "trip_selections", "trip_records", "trip_history"} <= set(inspect(engine).get_table_names())
     engine.dispose()
     print(json.dumps({"result": "passed", "database": "local disposable PostgreSQL", "checks": ["legacy schema creation", "additive upgrade", "schema drift", "saved trip preservation", "legacy expenses preservation", "positional IDs not reinterpreted", "revision backfill"]}))
 

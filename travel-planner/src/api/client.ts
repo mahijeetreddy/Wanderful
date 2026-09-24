@@ -1,4 +1,6 @@
 import { registerRequest, sessionEpoch } from "../features/auth/session";
+let needsValidation = !navigator.onLine;
+window.addEventListener("offline", () => { needsValidation = true; });
 
 export class ApiError extends Error {
   status: number;
@@ -14,6 +16,16 @@ export class ApiError extends Error {
 
 export async function apiFetch(path: string, init: RequestInit = {}) {
   const epoch = sessionEpoch();
+  if (!["GET", "HEAD", "OPTIONS"].includes((init.method || "GET").toUpperCase()) && !path.startsWith("/api/auth/")) {
+    if (!navigator.onLine) throw new ApiError("Reconnect before editing. Offline plans are read-only.", 0);
+    if (needsValidation) {
+      const validation = await apiFetch("/api/auth/me");
+      const session = await readApiJson<{ user?: { status?: string } | null }>(validation);
+      if (!session.user || session.user.status !== "active") throw new ApiError("Sign in again before editing this trip.", 401);
+      if (epoch !== sessionEpoch()) throw new DOMException("Session changed", "AbortError");
+      needsValidation = false;
+    }
+  }
   const controller = new AbortController();
   const abort = () => controller.abort();
   if (init.signal?.aborted) controller.abort();

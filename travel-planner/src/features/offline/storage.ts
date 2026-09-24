@@ -5,6 +5,10 @@ const ACCOUNT = "wanderful.offline-account";
 const GENERATION = "wanderful.offline-generation";
 type StoredPack = { key: string; owner: string; generation: string; pack: OfflineTripPack };
 export const offlineGeneration = () => localStorage.getItem(GENERATION) || "initial";
+export function validateOfflineAccount(userId: number | null) {
+  const owner = localStorage.getItem(ACCOUNT);
+  if (owner && owner !== String(userId)) void clearOfflinePacks().catch(() => undefined);
+}
 function openStore(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB, 1);
@@ -18,10 +22,12 @@ async function transaction<T>(mode: IDBTransactionMode, action: (store: IDBObjec
   return new Promise((resolve, reject) => {
     const tx = db.transaction("packs", mode);
     let result: T;
-    const request = action(tx.objectStore("packs"));
-    request.onsuccess = () => { result = request.result; };
     tx.oncomplete = () => { db.close(); resolve(result); };
     tx.onerror = tx.onabort = () => { db.close(); reject(tx.error || new Error("Offline storage failed.")); };
+    try {
+      const request = action(tx.objectStore("packs"));
+      request.onsuccess = () => { result = request.result; };
+    } catch (error) { tx.abort(); db.close(); reject(error); }
   });
 }
 export async function saveOfflinePack(pack: OfflineTripPack, generation: string) {

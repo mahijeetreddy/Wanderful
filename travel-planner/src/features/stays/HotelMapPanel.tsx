@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { recordHandoff } from "../search/handoff";
+import { meanDistanceKm } from "./proximity";
 import type { ReactNode } from "react";
 import { AlertTriangle, ArrowDown, ArrowRight, BookOpen, Bookmark, Braces, Building2, CalendarDays, Check, CircleUserRound, Clock, Cloud, CloudFog, CloudLightning, CloudRain, CloudSnow, Compass, Copy, Download, ExternalLink, FileText, FolderLock, ListChecks, Loader2, Lock, MapPin, Plane, ReceiptText, RotateCcw, Route, Search, Share2, Sparkles, Sun, Users, Wallet } from "lucide-react";
 import { useMap } from "react-leaflet";
@@ -38,6 +40,7 @@ export function HotelMapPanel({
   onLockHotel,
   onHotelsUpdated,
   providerStatus,
+  itineraryPlaces = [],
 }: {
   form: PlannerForm;
   hotels: HotelOption[];
@@ -46,6 +49,7 @@ export function HotelMapPanel({
   onLockHotel: (hotelId: string) => void;
   onHotelsUpdated: (hotels: HotelOption[], mapCenter: Coordinates | null) => void;
   providerStatus?: ProviderStatus;
+  itineraryPlaces?: Coordinates[];
 }) {
   const [selectedHotelId, setSelectedHotelId] = useState(hotels[0]?.id || "");
   const [mobileView, setMobileView] = useState<"list" | "map">("list");
@@ -55,6 +59,8 @@ export function HotelMapPanel({
   const [hotelStatus, setHotelStatus] = useState("");
   const [hotelStatusIsError, setHotelStatusIsError] = useState(false);
   const [hotelLoading, setHotelLoading] = useState(false);
+  const [sortBy, setSortBy] = useState("recommended");
+  const orderedHotels = [...hotels].sort((a, b) => sortBy === "nearby" ? (meanDistanceKm(a.coordinates, itineraryPlaces) ?? Infinity) - (meanDistanceKm(b.coordinates, itineraryPlaces) ?? Infinity) : sortBy === "price" ? (a.estimated_total ?? Infinity) - (b.estimated_total ?? Infinity) : 0);
   const hotelsWithCoordinates = hotels.filter((hotel) => validCoordinates(hotel.coordinates));
   const selectedHotel = hotels.find((hotel) => hotel.id === selectedHotelId) || hotels[0];
   const center = (validCoordinates(selectedHotel?.coordinates) ? selectedHotel.coordinates : null)
@@ -159,7 +165,8 @@ export function HotelMapPanel({
             ) : null}
           </div>
         </div>
-        {hotels.map((hotel, hotelIndex) => (
+        <label className="block text-sm text-white/75">Sort stays<select aria-label="Sort stays" value={sortBy} onChange={event => setSortBy(event.target.value)} className="ml-3 min-h-11 rounded-xl border border-white/25 bg-[#0e1518] px-3"><option value="recommended">Provider order</option><option value="price">Lowest full-stay estimate</option>{itineraryPlaces.length > 0 && <option value="nearby">Near known itinerary places</option>}</select></label>
+        {orderedHotels.map((hotel, hotelIndex) => (
           <article
             key={hotel.id}
             aria-label={hotel.name}
@@ -212,13 +219,14 @@ export function HotelMapPanel({
               {lockedHotelId === hotel.id ? "Selected" : "Choose stay"}
             </button>
             <button type="button" onClick={() => setDetailsHotel(hotel)} className="min-h-11 rounded-full border border-amber-200/25 px-4 text-sm text-amber-100">Stay details</button>
+            {meanDistanceKm(hotel.coordinates, itineraryPlaces) !== null && <p className="w-full text-xs text-white/75">{meanDistanceKm(hotel.coordinates, itineraryPlaces)!.toFixed(1)} km average from known itinerary places · straight-line estimate, not travel time.</p>}
             {validCoordinates(hotel.coordinates) ? <button type="button" onClick={() => { selectHotel(hotel.id); setMobileView("map"); }} className="min-h-11 rounded-full border border-[#72d7dc]/25 px-4 text-sm text-[#a9f1f1]">Show on map</button> : <p className="self-center text-xs text-white/70">Map location unavailable</p>}
             {hotel.link ? (
               <a
                 href={hotel.link}
                 target="_blank"
                 rel="noreferrer"
-                onClick={(event) => event.stopPropagation()}
+                onClick={(event) => { event.stopPropagation(); recordHandoff(hotel.snapshot_id); }}
                 className="inline-flex items-center gap-1.5 rounded-full border border-[#3fb6c4]/12 bg-[#3fb6c4]/[0.08] px-3 py-1.5 text-sm text-white/78 transition hover:bg-[#3fb6c4] hover:text-[#06181a]"
               >
                 View hotel <ExternalLink size={12} />

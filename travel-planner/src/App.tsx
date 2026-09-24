@@ -12,6 +12,7 @@ import { FlightOptionsPanel } from "./features/flights/FlightOptionsPanel";
 import { HotelMapPanel } from "./features/stays/HotelMapPanel";
 import { useTripWorkspace } from "./features/trips/useTripWorkspace";
 import { BookingSelections } from "./features/trips/BookingSelections";
+import { validateOfflineAccount } from "./features/offline/storage";
 import { DecisionPreview, type Decision } from "./features/trips/DecisionPreview";
 import { TripOverview } from "./features/trips/TripOverview";
 import { invalidateSession, observeSessionEnd, queryClient } from "./features/auth/session";
@@ -675,6 +676,26 @@ function App() {
     }
   };
 
+  const acceptTripUpdate = (updated: SavedTrip) => {
+    const previous = savedTrips.find(trip => trip.id === updated.id);
+    setSavedTrips(current => current.map(trip => trip.id === updated.id ? updated : trip));
+    if (activeSavedTrip?.id !== updated.id || !previous) return;
+    const signature = (value: SavedTrip) => JSON.stringify([value.form, value.itinerary, value.structuredItinerary || null, normalizeOptions(value.options)]);
+    const local = JSON.stringify([form, itinerary, structuredItinerary || null, normalizeOptions(options)]);
+    const remoteChanged = signature(previous) !== signature(updated);
+    if (remoteChanged && local !== signature(previous)) {
+      setError("The saved trip changed in a trip tool. Your workspace draft is retained; reopen the saved version to reconcile before saving.");
+      return;
+    }
+    setActiveSavedTrip({ id: updated.id, revision: updated.revision });
+    if (remoteChanged) {
+      workspaceGeneration.current += 1;
+      setPendingTripDecision(null);
+      setForm(updated.form); setItinerary(updated.itinerary);
+      setStructuredItinerary(updated.structuredItinerary || null); setOptions(normalizeOptions(updated.options));
+    }
+  };
+
   const loadSavedTrip = (trip: SavedTrip) => {
     setPendingTripDecision(null);
     workspaceGeneration.current += 1;
@@ -865,7 +886,7 @@ function App() {
         const response = await apiFetch("/api/auth/me", { signal });
         return await parsePlanResponse(response) as PlanResponse & { user?: AuthUser | null };
       }, staleTime: 0 });
-      if (requestEpoch === authRequestEpochRef.current) setAuthUser(payload.user || null);
+      if (requestEpoch === authRequestEpochRef.current) { validateOfflineAccount(payload.user?.id ?? null); setAuthUser(payload.user || null); }
     } catch {
       if (requestEpoch === authRequestEpochRef.current) setAuthUser(null);
     } finally {
@@ -1186,6 +1207,7 @@ function App() {
                 regeneratingDay={regeneratingDay}
                 onRegenerateDay={regenerateDay}
                 onOpenSavedTools={() => setSavedTripsOpen(true)}
+                tripTools={(() => { const trip = savedTrips.find(item => item.id === activeSavedTrip?.id); return trip ? <div><div className="flex flex-wrap gap-3"><button className="action-button" onClick={() => setIntelligenceTrip(trip)}>Budget, offline & recovery</button><button className="action-button" onClick={() => setExpenseTrip(trip)}>Group expenses</button><button className="action-button" onClick={() => setVaultTrip(trip)}>Document vault</button></div><BookingSelections trip={trip} onUpdated={acceptTripUpdate} /></div> : null; })()}
                 cursorEnabled={cursorEnabled}
                 onCursorChange={(enabled) => { setCursorEnabled(enabled); localStorage.setItem("wanderful.cursor-enabled", String(enabled)); }}
               />
@@ -1210,7 +1232,7 @@ function App() {
         onOpenExpenses={setExpenseTrip}
         onOpenVault={setVaultTrip}
         onToggleShare={toggleTripSharing}
-        onTripUpdated={(updated) => setSavedTrips((current) => current.map((trip) => trip.id === updated.id ? updated : trip))}
+        onTripUpdated={acceptTripUpdate}
       />
       <AuthModal
         open={authOpen}
@@ -1222,6 +1244,7 @@ function App() {
           clearActiveTripState();
           setHydratedScope(null);
           setAuthUser(user);
+          validateOfflineAccount(user.id);
           setAuthOpen(false);
         }}
       />
@@ -1260,7 +1283,7 @@ function App() {
         onClose={() => setIntelligenceTrip(null)}
         onTripUpdated={(updatedTrip) => {
           setIntelligenceTrip(updatedTrip);
-          setSavedTrips((current) => current.map((trip) => trip.id === updatedTrip.id ? updatedTrip : trip));
+          acceptTripUpdate(updatedTrip);
         }}
       />
       <GroupExpensesPanel
@@ -1268,7 +1291,7 @@ function App() {
         onClose={() => setExpenseTrip(null)}
         onTripUpdated={(updatedTrip) => {
           setExpenseTrip(updatedTrip);
-          setSavedTrips((current) => current.map((trip) => trip.id === updatedTrip.id ? updatedTrip : trip));
+          acceptTripUpdate(updatedTrip);
         }}
       />
       <TravelVaultPanel trip={vaultTrip} onClose={() => setVaultTrip(null)} />
@@ -1871,6 +1894,7 @@ function ItineraryResult({
   regeneratingDay,
   onRegenerateDay,
   onOpenSavedTools,
+  tripTools,
   cursorEnabled,
   onCursorChange,
 }: {
@@ -1886,6 +1910,7 @@ function ItineraryResult({
   regeneratingDay: number | null;
   onRegenerateDay: (dayNumber: number) => void;
   onOpenSavedTools: () => void;
+  tripTools: ReactNode;
   cursorEnabled: boolean;
   onCursorChange: (enabled: boolean) => void;
 }) {
@@ -1974,7 +1999,7 @@ function ItineraryResult({
           )}
 
           {structuredItinerary?.days?.length ? (
-            <RouteMapPanel destination={form.destination} days={structuredItinerary.days} mapCenter={options.map_center} />
+            <RouteMapPanel destination={form.destination} days={structuredItinerary.days} mapCenter={options.map_center} onResolved={(dayNumber, stops) => onStructuredItineraryChange({ ...structuredItinerary, days: structuredItinerary.days?.map(day => day.day_number !== dayNumber ? day : { ...day, activities: day.activities?.map((activity, index) => { const stop = stops.find(stop => stop.index === index); return stop ? { ...activity, coordinates: stop.coordinates, source_id: stop.source_id, source_url: stop.source_url } : activity; }) }) })} />
           ) : null}
 
           {itinerary && structuredItinerary ? <TripEssentials itinerary={structuredItinerary} /> : null}
@@ -1985,6 +2010,7 @@ function ItineraryResult({
         <div id="trip-panel-hotels" role="tabpanel" aria-labelledby="trip-tab-hotels"><HotelMapPanel
             form={form}
             hotels={options.hotels}
+            itineraryPlaces={(structuredItinerary?.days || []).flatMap(day => (day.activities || []).flatMap(activity => activity.coordinates && activity.source_id && activity.source_url ? [activity.coordinates] : []))}
             providerStatus={options.provider_status?.hotels}
             mapCenter={options.map_center}
             lockedHotelId={structuredItinerary?.locked_hotel_id || ""}
@@ -2012,7 +2038,7 @@ function ItineraryResult({
 
       {activeTab === "overview" ? <div id="trip-panel-overview" role="tabpanel" aria-labelledby="trip-tab-overview"><TripOverview form={form} options={options} itinerary={structuredItinerary} onNavigate={onTabChange} /></div> : null}
       {activeTab === "tools" || activeTab === "raw" ? <div id="trip-panel-tools" role="tabpanel" aria-labelledby="trip-tab-tools" className="space-y-4 p-5">
-        <section className="rounded-3xl border border-amber-200/20 bg-amber-200/5 p-5"><h3 className="text-xl text-white">Everything for the journey</h3><p className="mt-2 text-sm text-white/65">Open a saved trip for booking status, group expenses, documents and offline packs.</p><button type="button" onClick={onOpenSavedTools} className="mt-4 min-h-11 rounded-full border border-amber-200/30 px-5 text-sm text-amber-100">Open saved-trip tools</button></section>
+        <section className="rounded-3xl border border-amber-200/20 bg-amber-200/5 p-5"><h3 className="mb-4 text-xl text-white">Everything for the journey</h3>{tripTools || <><p className="mt-2 text-sm text-white/75">Save this trip to use booking status, group expenses, documents and offline packs.</p><button type="button" onClick={onOpenSavedTools} className="mt-4 min-h-11 rounded-full border border-amber-200/30 px-5 text-sm text-amber-100">Open saved-trip tools</button></>}</section>
         <label className="flex min-h-11 items-center gap-3 rounded-2xl border border-white/10 p-4 text-sm text-white/75"><input type="checkbox" checked={cursorEnabled} onChange={(event) => onCursorChange(event.target.checked)} className="h-4 w-4 accent-[#72d7dc]" />Enable decorative cursor</label>
         <details className="rounded-2xl border border-white/10 p-4 text-sm text-white/70"><summary className="min-h-11 cursor-pointer content-center">Original plan & sources</summary><SourcePanel itinerary={itinerary} /></details>
       </div> : null}

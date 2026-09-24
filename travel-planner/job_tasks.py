@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+from time import perf_counter
 from typing import Any
 
 from auth_store import get_user
@@ -24,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 def execute_plan_job(job_id: str, travel_input_values: dict[str, Any]) -> None:
+    started = perf_counter()
     travel_inputs = TravelInputs(**travel_input_values)
     try:
         if cancellation_requested(job_id):
@@ -71,7 +73,7 @@ def execute_plan_job(job_id: str, travel_input_values: dict[str, Any]) -> None:
             return
 
         structured, metrics = generate_structured_plan(travel_inputs, trip_data)
-        metrics = {"collection": trip_data.get("collection_metrics", {}), "planning": metrics}
+        metrics = {"collection": trip_data.get("collection_metrics", {}), "planning": metrics, "full_plan_ms": round((perf_counter() - started) * 1000)}
         itinerary = render_itinerary_markdown(structured)
         update_plan_job(
             job_id,

@@ -1,5 +1,6 @@
 """Owner-managed, exact trip ledger. Settlements never count as additional spending."""
 import uuid
+from decimal import Decimal, ROUND_HALF_UP
 from copy import deepcopy
 from sqlalchemy import select
 from models import TripRecord, TripSelection, OfferSnapshot
@@ -112,11 +113,19 @@ def summary(db, trip, *, structured=None):
         if item["amount_minor"] is None:
             unknown.append(f"Confirmed cost unknown: {item['label']}.")
     budget = minor((trip.form_json or {}).get("budget") or 0, currency)
-    return {"currency": currency, "exponent": precision, "budget_minor": budget, "planned_minor": sum(planned.values()), "confirmed_minor": confirmed, "paid_minor": actual, "expected_minor": expected, "remaining_expected_minor": max(0, expected - actual), "budget_remaining_minor": budget - expected, "warnings": unknown, "records": values, "commitments": booked, "balances": balances(values), "revision": trip.revision}
+    try:
+        reserve_percent = Decimal(str((trip.budget_state_json or {}).get("reserve_percent", 10)))
+        if not reserve_percent.is_finite() or not 0 <= reserve_percent <= 50: raise ValueError()
+    except (ValueError, ArithmeticError):
+        reserve_percent = Decimal(10)
+        unknown.append("Invalid historical reserve; using a 10% planning reserve.")
+    reserve = int((Decimal(budget) * reserve_percent / 100).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+    return {"currency": currency, "exponent": precision, "budget_minor": budget, "reserve_percent": str(reserve_percent), "reserve_minor": reserve, "spendable_remaining_minor": budget - expected - reserve, "planned_minor": sum(planned.values()), "confirmed_minor": confirmed, "paid_minor": actual, "expected_minor": expected, "remaining_expected_minor": max(0, expected - actual), "budget_remaining_minor": budget - expected, "warnings": unknown, "records": values, "commitments": booked, "balances": balances(values), "revision": trip.revision}
 
 
 def validate_record(db, trip, kind, body):
     currency = (trip.form_json or {}).get("currency_code", "USD")
+    if not isinstance(kind, str): raise ValueError("Choose a valid record kind.")
     if kind == "member":
         name = str(body.get("name", "")).strip()[:100]
         if not name:
@@ -135,7 +144,7 @@ def validate_record(db, trip, kind, body):
     if kind == "expense":
         split = body.get("split_ids")
         payer = body.get("paid_by_id")
-        if not isinstance(split, list) or not split or any(not isinstance(identity, str) or identity not in members for identity in split) or payer not in members:
+        if not isinstance(payer, str) or not isinstance(split, list) or not split or any(not isinstance(identity, str) or identity not in members for identity in split) or payer not in members:
             raise ValueError("Choose existing members for payer and split.")
         value.update(paid_by_id=payer, split_ids=sorted(set(split)))
         if body.get("commitment_id"):
@@ -145,7 +154,7 @@ def validate_record(db, trip, kind, body):
             value.update(commitment_id=commitment["id"], category=commitment["category"])
     elif kind == "settlement":
         sender, receiver = body.get("from_id"), body.get("to_id")
-        if sender not in members or receiver not in members or sender == receiver:
+        if not isinstance(sender, str) or not isinstance(receiver, str) or sender not in members or receiver not in members or sender == receiver:
             raise ValueError("Choose two different existing members.")
         owed = balances(values)
         if amount > min(-owed[sender], owed[receiver]):

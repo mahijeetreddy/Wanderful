@@ -11,7 +11,7 @@ from security import current_user, require_active_user
 from database import session_scope
 from models import SavedTrip, TripRecord, TripHistory, TripShare, utcnow
 from trip_mutations import check_revision, update_workspace, TripRevisionConflict
-from search_service import read_offer
+from search_service import read_offer, read_search
 from decisions import impact
 from runtime_store import _apply_locked_pricing
 from ledger import summary, ensure_imported, validate_record, current_records
@@ -37,6 +37,19 @@ def _response_trip(db, trip):
     return {**_trip_dict(trip, share_token=share.token if share else None), "selections": _selection_dicts(db, trip.id)}
 
 
+def _validate_preview_offer(owner, trip, offer, kind):
+    search = read_search(offer["search_id"], owner)
+    form = trip.get("form") or {}
+    if not search or offer.get("currency") != form.get("currency_code", "USD"):
+        raise ValueError("Offer currency or search does not match this trip.")
+    for key in ("origin", "destination", "start_date", "end_date", "adults", "currency_code"):
+        expected = search["context"].get(key)
+        if expected is not None and str(expected) != str(form.get(key)):
+            raise ValueError("Offer search context does not match this trip. Run a matching search first.")
+    if kind == "flights" and not offer.get("has_return_details"):
+        raise ValueError("Complete the outbound and return selection first.")
+
+
 def calculate(owner, trip_id, body):
     trip = get_saved_trip(owner, trip_id)
     offer = read_offer(str(body.get("snapshot_id", "")), owner)
@@ -45,6 +58,7 @@ def calculate(owner, trip_id, body):
     kind = offer.pop("kind")
     if kind not in {"flights", "hotels"}:
         raise ValueError("Unsupported offer.")
+    _validate_preview_offer(owner, trip, offer, kind)
     result = impact(trip, offer, kind, body.get("assumptions"))
     options = deepcopy(trip["options"])
     options[kind] = [offer, *[item for item in options.get(kind, []) if item.get("id") != offer["id"]]]
@@ -77,6 +91,8 @@ def make_workspace_blueprint():
             raise ValueError("Workspace itinerary and options are required.")
         impacts = []
         for kind, lock in (("flights", "locked_flight_id"), ("hotels", "locked_hotel_id")):
+            if not isinstance(options.get(kind, []), list) or any(not isinstance(item, dict) for item in options.get(kind, [])):
+                raise ValueError("Offer options must be a list of objects.")
             identity = structured.get(lock)
             old_id = trip["structuredItinerary"].get(lock)
             chosen = next((item for item in options.get(kind, []) if item.get("id") == identity), None) if identity else None
@@ -87,6 +103,7 @@ def make_workspace_blueprint():
                 offer = read_offer(str((chosen or {}).get("snapshot_id", "")), owner)
                 if not offer or offer.pop("kind") != kind or offer.get("id") != identity:
                     raise ValueError("Refresh this historical choice before changing its selection.")
+                _validate_preview_offer(owner, {**trip, "form": draft.get("form") or trip["form"]}, offer, kind)
                 options[kind] = [offer, *[item for item in options.get(kind, []) if item.get("id") != identity]]
             else:
                 offer = {"id": "", "currency": trip["form"].get("currency_code", "USD"), "total_price": 0}
@@ -171,7 +188,7 @@ def make_workspace_blueprint():
     def add_record(trip_id):
         body = _body()
         identity = body.get("id", "")
-        if not isinstance(identity, str) or not re.fullmatch(r"[a-zA-Z0-9-]{8,100}", identity) or identity.startswith(("legacy-", "member-", "booking-")):
+        if not isinstance(identity, str) or not re.fullmatch(r"[a-zA-Z0-9-]{8,100}", identity) or identity.startswith(("legacy-", "member-", "booking-", "weather-")):
             raise ValueError("Provide a unique client-generated record ID.")
         with session_scope() as db:
             trip = _trip(db, trip_id, current_user()["id"])
@@ -194,6 +211,26 @@ def make_workspace_blueprint():
             result = {"trip": _response_trip(db, trip), "ledger": summary(db, trip)}
         return jsonify(result), 201
 
+    @bp.put("/api/trips/<int:trip_id>/reserve")
+    @require_active_user
+    def reserve(trip_id):
+        from decimal import Decimal, InvalidOperation
+        body = _body()
+        try:
+            percentage = Decimal(str(body.get("reserve_percent")))
+            if not percentage.is_finite() or not 0 <= percentage <= 50 or percentage.as_tuple().exponent < -2:
+                raise ValueError()
+        except (InvalidOperation, ValueError):
+            raise ValueError("Reserve must be between 0 and 50 percent, with at most two decimal places.")
+        with session_scope() as db:
+            trip = _trip(db, trip_id, current_user()["id"])
+            if not trip: return jsonify({"error": "Trip not found."}), 404
+            check_revision(trip, body.get("expected_revision"))
+            trip.budget_state_json = {**(trip.budget_state_json or {}), "reserve_percent": str(percentage)}
+            trip.updated_at = utcnow()
+            db.flush()
+            return jsonify({"trip": _response_trip(db, trip), "ledger": summary(db, trip)})
+
     @bp.delete("/api/trips/<int:trip_id>/records/<record_id>")
     @require_active_user
     def remove_record(trip_id, record_id):
@@ -204,7 +241,7 @@ def make_workspace_blueprint():
             check_revision(trip, _body().get("expected_revision"))
             ensure_imported(db, trip)
             row = db.get(TripRecord, (trip_id, record_id))
-            if not row or row.kind == "migration":
+            if not row or row.kind not in {"member", "expense", "settlement", "commitment", "legacy_unresolved"}:
                 return jsonify({"error": "Record not found."}), 404
             for item in current_records(db, trip):
                 if item.get("commitment_id") == record_id or record_id in [item.get("paid_by_id"), item.get("from_id"), item.get("to_id"), *item.get("split_ids", [])]:
@@ -224,6 +261,34 @@ def make_workspace_blueprint():
                 return jsonify({"error": "Trip not found."}), 404
             entries = db.scalars(select(TripHistory).where(TripHistory.trip_id == trip_id).order_by(TripHistory.revision.desc()).limit(30)).all()
             return jsonify({"revision": trip.revision, "history": [{"revision": row.revision, "created_at": row.created_at.isoformat(), "days": len((row.payload.get("structuredItinerary") or {}).get("days", []))} for row in entries]})
+
+    @bp.route("/api/trips/<int:trip_id>/weather-monitoring", methods=["GET", "PUT"])
+    @require_active_user
+    def weather_subscription(trip_id):
+        from weather_monitoring import enabled, coordinates
+        with session_scope() as db:
+            trip = _trip(db, trip_id, current_user()["id"])
+            if not trip:
+                return jsonify({"error": "Trip not found."}), 404
+            subscription = db.get(TripRecord, (trip_id, "weather-subscription"))
+            if request.method == "PUT":
+                body = _body()
+                check_revision(trip, body.get("expected_revision"))
+                if type(body.get("enabled")) is not bool:
+                    raise ValueError("Choose whether to enable weather monitoring.")
+                if body["enabled"] and not enabled():
+                    raise ValueError("Weather monitoring has not been configured by the operator.")
+                if body["enabled"] and not coordinates(trip):
+                    raise ValueError("A destination location from a trip search is required first.")
+                value = {"enabled": body["enabled"]}
+                if subscription: subscription.payload = value
+                else:
+                    subscription = TripRecord(trip_id=trip_id, id="weather-subscription", kind="weather_subscription", payload=value)
+                    db.add(subscription)
+                trip.updated_at = utcnow()
+                db.flush()
+            alerts = db.scalars(select(TripRecord).where(TripRecord.trip_id == trip_id, TripRecord.kind == "weather_alert").order_by(TripRecord.created_at.desc()).limit(20)).all()
+            return jsonify({"configured": enabled(), "enabled": bool(subscription and subscription.payload.get("enabled")), "alerts": [{"id": row.id, **row.payload} for row in alerts], "trip": _response_trip(db, trip)})
 
     @bp.post("/api/trips/<int:trip_id>/undo")
     @require_active_user

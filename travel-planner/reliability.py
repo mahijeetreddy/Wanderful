@@ -61,8 +61,22 @@ def increment_metric(name: str, amount: int = 1) -> None:
     if not client:
         return
     key = f"wanderful:metrics:{name}"
-    client.incrby(key, amount)
-    client.expire(key, 7 * 24 * 3600)
+    try:
+        client.incrby(key, amount)
+        client.expire(key, 7 * 24 * 3600)
+    except Exception:
+        pass  # Observability outages must not fail provider requests or handoffs.
+
+
+def record_timing(name: str, milliseconds: float) -> None:
+    client = redis_client()
+    if not client: return
+    try:
+        key = f"wanderful:timings:{name}"
+        with client.pipeline() as pipeline:
+            pipeline.lpush(key, milliseconds).ltrim(key, 0, 999).expire(key, 7 * 24 * 3600).execute()
+    except Exception:
+        pass
 
 
 def _failed_result(value: Any) -> bool:

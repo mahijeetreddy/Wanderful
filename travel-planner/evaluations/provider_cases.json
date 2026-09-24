@@ -1,0 +1,10 @@
+[
+  {"id":"complete-search","raw":{"properties":[{"name":"Fixture stay"}]},"status":"success","kind":"hotels","offer":{"currency":"USD","estimated_total":420,"room_type":"Double","taxes_included":true,"cancellation_policy":"Non-refundable"}},
+  {"id":"missing-total","raw":{"properties":[{"name":"Unknown total"}]},"status":"success","kind":"hotels","offer":{"currency":"USD","estimated_total":null}},
+  {"id":"no-inventory","raw":"No hotels found","status":"empty"},
+  {"id":"unavailable-capability","raw":"Search unavailable","status":"unavailable"},
+  {"id":"provider-timeout","raw":"Provider timed out","status":"timeout"},
+  {"id":"provider-outage","raw":{"error":"fixture outage"},"status":"error"},
+  {"id":"expired-selection","raw":{"properties":[]},"status":"success","kind":"hotels","offer":{"currency":"USD","estimated_total":420,"retrieved_at":"2020-01-01T00:00:00+00:00"}},
+  {"id":"planning-failure","raw":{"error":"planning fixture failed"},"status":"error","itinerary":{"days":[]}}
+]

@@ -368,13 +368,13 @@ def build_offline_pack(trip: dict[str, Any]) -> dict[str, Any]:
     options = _dict(trip.get("options"))
     days = [day for day in structured.get("days", []) if isinstance(day, dict)]
     pack = {
-        "version": 1,
+        "version": 2,
         "generated_at": datetime.utcnow().isoformat() + "Z",
         "trip": {"id": trip.get("id"), "name": trip.get("name"), "destination": trip.get("destination"), "date_range": trip.get("dateRange")},
         "days": days,
         "bookings": {
-            "hotel": _find_by_id(options.get("hotels"), structured.get("locked_hotel_id") or structured.get("recommended_hotel_id")),
-            "flight": _find_by_id(options.get("flights"), structured.get("locked_flight_id") or structured.get("recommended_flight_id")),
+            "hotel": _offline_booking(_find_by_id(options.get("hotels"), structured.get("locked_hotel_id"))),
+            "flight": _offline_booking(_find_by_id(options.get("flights"), structured.get("locked_flight_id"))),
         },
         "essentials": {"packing": structured.get("packing_list") or [], "logistics": structured.get("logistics") or [], "risks": structured.get("risks") or []},
         "emergency": {"local_emergency_number": "Verify locally before departure", "travel_insurance": "Add policy details to your trip notes", "offline_note": "Addresses and booking details are available without a connection."},
@@ -383,6 +383,13 @@ def build_offline_pack(trip: dict[str, Any]) -> dict[str, Any]:
     pack["checksum"] = hashlib.sha256(canonical).hexdigest()[:16]
     pack["item_count"] = len(days) + sum(len(day.get("activities", [])) for day in days)
     return pack
+
+
+def _offline_booking(value):
+    if not value:
+        return None
+    # Deliberately exclude quote prices, provider tokens, documents and booking references.
+    return {key: deepcopy(value[key]) for key in ("id", "name", "address", "segments", "check_in", "check_out") if key in value}
 
 
 def _find_by_id(values: Any, option_id: Any) -> dict[str, Any] | None:

@@ -219,10 +219,24 @@ def unhandled_error(error):
 
 
 @app.get("/")
+@app.get("/offline")
+@app.get("/index.html")
 def index():
     if Path("dist/index.html").exists():
         return send_from_directory("dist", "index.html")
     return render_template("index.html")
+
+
+@app.get("/sw.js")
+@app.get("/manifest.webmanifest")
+def offline_public_asset():
+    filename = request.path.lstrip("/")
+    response = send_from_directory("dist", filename)
+    response.headers["Cache-Control"] = "no-cache"
+    if filename == "sw.js":
+        response.headers["Service-Worker-Allowed"] = "/"
+        response.headers["Content-Type"] = "application/javascript"
+    return response
 
 
 @app.get("/assets/<path:filename>")
@@ -567,7 +581,7 @@ def trip_offline_pack_get(trip_id: int):
     trip = get_saved_trip(user["id"], trip_id)
     if not trip:
         return jsonify({"error": "Saved trip not found."}), 404
-    return jsonify({"pack": build_offline_pack(trip)})
+    return jsonify({"pack": {**build_offline_pack(trip), "owner_id": user["id"]}})
 
 
 @app.post("/api/trips/<int:trip_id>/disruptions")

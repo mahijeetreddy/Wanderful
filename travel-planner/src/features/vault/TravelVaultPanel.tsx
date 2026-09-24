@@ -3,6 +3,7 @@ import { CalendarClock, Download, FileImage, FileKey2, FileText, FolderLock, Loc
 
 import { apiFetch, readApiJson } from "../../api/client";
 import type { SavedTrip, TravelDocument } from "../../domain/travel";
+import { Modal } from "../search/Modal";
 
 const categories = ["Booking", "Identity", "Insurance", "Transport", "Other"];
 
@@ -29,16 +30,6 @@ export function TravelVaultPanel({ trip, onClose }: { trip: SavedTrip | null; on
     return () => controller.abort();
   }, [trip?.id]);
 
-  useEffect(() => {
-    if (!trip) return;
-    const overflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
-    document.addEventListener("keydown", onKey);
-    requestAnimationFrame(() => closeRef.current?.focus());
-    return () => { document.body.style.overflow = overflow; document.removeEventListener("keydown", onKey); };
-  }, [trip, onClose]);
-
   if (!trip) return null;
 
   const upload = async () => {
@@ -55,6 +46,7 @@ export function TravelVaultPanel({ trip, onClose }: { trip: SavedTrip | null; on
   };
 
   const remove = async (document: TravelDocument) => {
+    if (!window.confirm(`Delete ${document.name}? This cannot be restored through itinerary history.`)) return;
     setBusy(true); setStatus("");
     try {
       await apiFetch(`/api/trips/${trip.id}/documents/${document.id}`, { method: "DELETE" }).then((response) => readApiJson(response));
@@ -65,8 +57,8 @@ export function TravelVaultPanel({ trip, onClose }: { trip: SavedTrip | null; on
 
   const expiring = documents.filter((document) => expiryState(document.expires_on) !== "safe").length;
 
-  return <div className="fixed inset-0 z-[110] overflow-auto bg-[#061012]/94 px-3 py-5 backdrop-blur-xl sm:px-5 sm:py-8" onClick={onClose}>
-    <div role="dialog" aria-modal="true" aria-labelledby={titleId} className="mx-auto max-w-6xl overflow-hidden rounded-[34px] border border-[#f1bf75]/16 bg-[#0b1517] shadow-[0_45px_150px_rgba(0,0,0,.7)]" onClick={(event) => event.stopPropagation()}>
+  return <Modal label="Travel document vault" onClose={onClose}>
+    <div className="mx-auto w-full max-w-6xl overflow-hidden rounded-[34px] border border-[#f1bf75]/16 bg-[#0b1517] shadow-[0_45px_150px_rgba(0,0,0,.7)]">
       <header className="vault-hero relative overflow-hidden border-b border-white/8 px-5 py-7 sm:px-8 sm:py-9">
         <div className="relative z-10 flex flex-wrap items-start justify-between gap-5"><div><div className="flex items-center gap-2 text-[#f1bf75]"><LockKeyhole size={15}/><p className="text-[10px] font-semibold uppercase tracking-[.2em]">Travel document vault</p></div><h2 id={titleId} className="mt-3 text-3xl font-medium tracking-[-.045em] text-white sm:text-5xl">Everything important. One safe place.</h2><p className="mt-3 text-sm text-white/46">{trip.name}</p></div><button ref={closeRef} type="button" aria-label="Close travel document vault" onClick={onClose} className="grid h-11 w-11 place-items-center rounded-full border border-white/10 bg-black/20 text-white/65 hover:text-white"><X size={18}/></button></div>
         <div className="relative z-10 mt-7 flex flex-wrap gap-3"><VaultStat label="Documents" value={`${documents.length}`} icon={<FolderLock size={16}/>}/><VaultStat label="Needs attention" value={`${expiring}`} icon={<CalendarClock size={16}/>}/><VaultStat label="Privacy" value="Private" icon={<ShieldCheck size={16}/>}/></div>
@@ -88,7 +80,7 @@ export function TravelVaultPanel({ trip, onClose }: { trip: SavedTrip | null; on
       </div>
       {status ? <div role="status" className="border-t border-white/8 px-6 py-3 text-center text-sm text-[#f1cf96]">{status}</div> : null}
     </div>
-  </div>;
+  </Modal>;
 }
 
 function DocumentCard({ document, tripId, busy, onDelete }: { document: TravelDocument; tripId: string; busy: boolean; onDelete: () => void }) {

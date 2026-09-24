@@ -3,6 +3,8 @@ import { AlertTriangle, Check, CloudDownload, Gauge, Heart, PlaneTakeoff, Plus, 
 
 import { apiFetch, readApiJson } from "../../api/client";
 import { ExactLedger } from "../expenses/ExactLedger";
+import { WeatherMonitoring } from "./WeatherMonitoring";
+import { Modal } from "../search/Modal";
 import { listOfflinePacks, offlineGeneration, removeOfflinePack, saveOfflinePack } from "../offline/storage";
 import type { BudgetExpense, BudgetGuardian, OfflineTripPack, RecommendationEvidence, SavedTrip, TripHealth } from "../../domain/travel";
 
@@ -60,16 +62,6 @@ export function TripIntelligencePanel({ trip, onClose, onTripUpdated }: { trip: 
     return () => { window.removeEventListener("online", updateConnection); window.removeEventListener("offline", updateConnection); };
   }, []);
 
-  useEffect(() => {
-    if (!trip) return;
-    const previousOverflow = document.body.style.overflow;
-    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    document.body.style.overflow = "hidden";
-    const handleKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") onCloseRef.current(); };
-    document.addEventListener("keydown", handleKeyDown); window.requestAnimationFrame(() => closeButtonRef.current?.focus());
-    return () => { document.removeEventListener("keydown", handleKeyDown); document.body.style.overflow = previousOverflow; previousFocus?.focus(); };
-  }, [trip?.id]);
-
   if (!trip) return null;
   const activities = ((live?.day as { activities?: Array<Record<string, unknown>> } | null)?.activities || []);
   const dayNumber = Number((live?.day as { day_number?: number } | null)?.day_number || 1);
@@ -125,10 +117,10 @@ export function TripIntelligencePanel({ trip, onClose, onTripUpdated }: { trip: 
     const anchor = document.createElement("a"); anchor.href = url; anchor.download = `${trip.destination.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-offline-pack.json`; anchor.click(); URL.revokeObjectURL(url);
   };
 
-  const analyzeDisruption = async (event: LiveEvent) => {
+  const analyzeDisruption = async (event: LiveEvent, affectedDay = dayNumber) => {
     setSelectedEvent(event); setLoading(true);
     try {
-      const payload = await apiFetch(`/api/trips/${trip.id}/disruptions`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ event, day_number: dayNumber, apply: false }) }).then((response) => readApiJson<{ scenarios: DisruptionScenario[] }>(response));
+      const payload = await apiFetch(`/api/trips/${trip.id}/disruptions`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ event, day_number: affectedDay, apply: false }) }).then((response) => readApiJson<{ scenarios: DisruptionScenario[] }>(response));
       setScenarios(payload.scenarios); setStatus("Three recovery paths are ready for review.");
     } catch (error) { setStatus(error instanceof Error ? error.message : "Could not generate recovery paths."); }
     finally { setLoading(false); }
@@ -143,18 +135,20 @@ export function TripIntelligencePanel({ trip, onClose, onTripUpdated }: { trip: 
     finally { setLoading(false); }
   };
 
-  return <div className="fixed inset-0 z-[100] overflow-auto bg-[#071012]/90 px-3 py-5 backdrop-blur-xl sm:px-4 sm:py-8" onClick={onClose}>
-    <div role="dialog" aria-modal="true" aria-labelledby={titleId} className="mx-auto max-w-6xl rounded-[30px] border border-[#3fb6c4]/18 bg-[#0e1518]/96 p-4 shadow-[0_40px_130px_rgba(0,0,0,.6)] sm:p-8" onClick={(event) => event.stopPropagation()}>
+  return <Modal label="Trip command center" onClose={onClose}>
+    <div className="mx-auto w-full max-w-6xl rounded-[30px] border border-[#3fb6c4]/18 bg-[#0e1518]/96 p-4 shadow-[0_40px_130px_rgba(0,0,0,.6)] sm:p-8">
       <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-[10px] font-medium uppercase tracking-[.18em] text-[#72d7dc]">Trip command center</p><h2 id={titleId} className="mt-2 text-3xl font-medium tracking-[-.04em] text-white">{trip.name}</h2><p className="mt-2 text-sm text-white/55">Protect the budget, prepare for weak signal, and recover intelligently when plans change.</p></div><button ref={closeButtonRef} type="button" onClick={onClose} className="rounded-full border border-white/10 px-4 py-2 text-sm text-white/70">Close</button></div>
-      <div role="tablist" aria-label="Trip command center" className="mt-6 grid grid-cols-2 gap-1 rounded-[20px] border border-white/8 bg-black/25 p-1.5 lg:grid-cols-4">{tabs.map((tab) => <button key={tab.id} type="button" role="tab" aria-selected={activeTab === tab.id} onClick={() => setActiveTab(tab.id)} className={`inline-flex items-center justify-center gap-2 rounded-2xl px-3 py-3 text-xs transition sm:text-sm ${activeTab === tab.id ? "bg-[#3fb6c4] font-medium text-[#06181a]" : "text-white/55 hover:bg-white/5 hover:text-white"}`}>{tab.icon}{tab.label}</button>)}</div>
+      <div role="tablist" aria-label="Trip command center" className="mt-6 grid grid-cols-2 gap-1 rounded-[20px] border border-white/8 bg-black/25 p-1.5 lg:grid-cols-4">{tabs.map((tab, index) => <button key={tab.id} id={`command-tab-${tab.id}`} aria-controls="command-panel" tabIndex={activeTab === tab.id ? 0 : -1} type="button" role="tab" aria-selected={activeTab === tab.id} onClick={() => setActiveTab(tab.id)} onKeyDown={event => { const target = event.key === "ArrowRight" ? (index + 1) % tabs.length : event.key === "ArrowLeft" ? (index + tabs.length - 1) % tabs.length : event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : null; if (target !== null) { event.preventDefault(); setActiveTab(tabs[target].id); document.getElementById(`command-tab-${tabs[target].id}`)?.focus(); } }} className={`inline-flex items-center justify-center gap-2 rounded-2xl px-3 py-3 text-xs transition sm:text-sm ${activeTab === tab.id ? "bg-[#3fb6c4] font-medium text-[#06181a]" : "text-white/75 hover:bg-white/5 hover:text-white"}`}>{tab.icon}{tab.label}</button>)}</div>
+      <div id="command-panel" role="tabpanel" aria-labelledby={`command-tab-${activeTab}`}>
       {status ? <p role="status" aria-live="polite" className="mt-4 rounded-2xl border border-[#3fb6c4]/15 bg-[#3fb6c4]/8 px-4 py-3 text-sm text-white/70">{status}</p> : null}
       {loading && !health ? <p role="status" className="mt-8 text-white/60">Loading trip intelligence...</p> : null}
       {activeTab === "health" && health ? <HealthView health={health} activities={activities} dayNumber={dayNumber} constraints={constraints} savingConstraint={savingConstraint} savingFeedback={savingFeedback} feedbackSent={feedbackSent} destination={trip.destination} onConstraint={saveConstraint} onFeedback={sendFeedback} /> : null}
       {activeTab === "budget" ? <ExactLedger key={trip.id} trip={trip} onUpdated={onTripUpdated} /> : null}
       {activeTab === "offline" ? <><a href="/offline" className="mt-4 inline-flex min-h-11 items-center rounded-full border border-white/25 px-4 text-white">Open offline companion</a><OfflineView pack={offlinePack} isOnline={isOnline} busy={loading} onPrepare={prepareOffline} onDownload={downloadOfflinePack} onRemove={() => { void removeOfflinePack(trip.id).then(() => { setOfflinePack(null); setStatus("Offline copy removed from this device."); }).catch(() => setStatus("Could not remove the device copy. Please retry.")); }} /></> : null}
-      {activeTab === "disruptions" ? <DisruptionView events={live?.events || []} selectedEvent={selectedEvent} scenarios={scenarios} busy={loading} history={trip.disruptionHistory || []} onAnalyze={analyzeDisruption} onApply={applyScenario} /> : null}
+      {activeTab === "disruptions" ? <><WeatherMonitoring trip={trip} onUpdated={onTripUpdated} onPreview={(date) => { const day = trip.structuredItinerary?.days?.find(day => day.date === date); if (day) void analyzeDisruption("rain", day.day_number); else setStatus("That forecast date has no itinerary day to adjust."); }} /><DisruptionView events={live?.events || []} selectedEvent={selectedEvent} scenarios={scenarios} busy={loading} history={trip.disruptionHistory || []} onAnalyze={analyzeDisruption} onApply={applyScenario} /></> : null}
+      </div>
     </div>
-  </div>;
+  </Modal>;
 }
 
 function HealthView({ health, activities, dayNumber, constraints, savingConstraint, savingFeedback, feedbackSent, destination, onConstraint, onFeedback }: { health: TripHealth; activities: Array<Record<string, unknown>>; dayNumber: number; constraints: Record<string, Constraint>; savingConstraint: string; savingFeedback: string; feedbackSent: Record<string, string>; destination: string; onConstraint: (key: string, value: Constraint) => void; onFeedback: (evidence: RecommendationEvidence, sentiment: "loved" | "disliked" | "skipped", tags: string[]) => void }) {

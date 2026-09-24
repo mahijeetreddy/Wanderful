@@ -68,6 +68,8 @@ def impact(trip, offer, kind, assumptions=None):
     old_price, new_price = offer_minor(previous, currency), offer_minor(offer, currency)
     issues, windows = [], {}
     warnings = []
+    if offer.get("needs_recheck"):
+        warnings.append("This saved quote needs rechecking. Selection does not confirm price or availability.")
     if kind == "flights":
         for day in structured.get("days", []):
             for activity in day.get("activities", []):

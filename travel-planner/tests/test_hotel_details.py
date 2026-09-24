@@ -58,7 +58,7 @@ def test_room_rate_snapshot_preserves_price_identity_and_saved_trip_selection(cl
     assert refreshed["snapshot_id"] != selected["snapshot_id"]
     assert read_offer(selected["snapshot_id"], user["id"])["estimated_total"] == 510.25
     trip = create_saved_trip(user["id"], {"name": "Lisbon", "destination": "Lisbon", "dateRange": "May", "itinerary": "Plan", "form": context})
-    response = client.put(f"/api/trips/{trip['id']}/selection", json={"snapshot_id": selected["snapshot_id"]})
+    response = client.put(f"/api/trips/{trip['id']}/selection", json={"snapshot_id": selected["snapshot_id"], "expected_revision": trip["revision"]})
     assert response.status_code == 200
     reopened = get_saved_trip(user["id"], int(trip["id"]))
     assert reopened["options"]["hotels"][0]["room_type"] == "Garden suite"

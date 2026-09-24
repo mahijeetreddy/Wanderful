@@ -12,7 +12,7 @@ from typing import Any
 from main import TravelInputs
 from offers import classify_result, offer_metadata, stable_offer_id
 from ranking import rank_flights, rank_hotels, score_activity
-from reliability import increment_metric, provider_call
+from reliability import increment_metric, provider_call, record_timing
 from runtime_store import get_cached_response, set_cached_response
 from tools import FlightSearchTool, HotelSearchTool, LocalSearchTool, WeatherForecastTool, normalize_airport_id
 
@@ -284,6 +284,7 @@ def _run_provider_tasks_with_metrics(tasks: dict[str, Any], on_partial: Any = No
     started = time.perf_counter()
     results: dict[str, str] = {}
     timings: dict[str, int] = {}
+    first_useful_ms = None
     max_workers = max(1, min(len(tasks), 4))
 
     def timed(name: str, task: Any) -> str:
@@ -301,19 +302,29 @@ def _run_provider_tasks_with_metrics(tasks: dict[str, Any], on_partial: Any = No
                 results[name] = str(future.result())
             except Exception as exc:
                 results[name] = f"{name.replace('_', ' ').title()} failed: {exc}"
+            if first_useful_ms is None:
+                try:
+                    parsed = json.loads(results[name])
+                    if isinstance(parsed, dict) and any(parsed.get(key) for key in ("best_flights", "other_flights", "flights", "properties", "hotels")):
+                        first_useful_ms = round((time.perf_counter() - started) * 1000)
+                except (TypeError, ValueError):
+                    pass
             if on_partial:
                 on_partial(name, results[name])
     return results, {
         "provider_ms": timings,
+        "first_useful_ms": first_useful_ms,
         "total_ms": round((time.perf_counter() - started) * 1000),
         "parallel_workers": max_workers,
     }
 
 
 def _cached_provider_call(provider: str, ttl_seconds: int, payload: dict[str, Any], call: Any, bypass_cache: bool = False) -> str:
+    started = time.perf_counter()
     cache_key = _cache_key(provider, payload)
     cached = None if bypass_cache else get_cached_response(cache_key)
     if isinstance(cached, str):
+        record_timing("cached_provider_ms", (time.perf_counter() - started) * 1000)
         increment_metric("cache_hits")
         return cached
     increment_metric("cache_misses")
