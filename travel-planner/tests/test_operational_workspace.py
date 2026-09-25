@@ -54,6 +54,11 @@ def test_forecast_alerts_deduplicate_and_never_modify_itinerary(client, monkeypa
     forecast = {"city": {"timezone": 3600}, "list": [{"dt": int(datetime(2026, 9, 24, 12, tzinfo=timezone.utc).timestamp()), "weather": [{"id": 201}], "main": {"temp": 20}}]}
     assert record_forecast(identity, forecast, now)["alerts"] == 1
     assert record_forecast(identity, forecast, now)["alerts"] == 0
+    from datetime import timedelta
+    checked_again = now + timedelta(hours=6)
+    assert record_forecast(identity, forecast, checked_again)["alerts"] == 0
+    with session_scope() as db:
+        assert db.get(TripRecord, (identity, "weather-state-2026-09-24")).payload["checked_at"] == checked_again.isoformat()
     assert record_forecast(identity, {"error": "provider unavailable"}, now)["status"] == "unavailable"
     assert get_saved_trip(owner, identity)["revision"] == 1
     assert get_saved_trip(owner, identity)["itinerary"] == "Original"
@@ -62,6 +67,48 @@ def test_forecast_alerts_deduplicate_and_never_modify_itinerary(client, monkeypa
     with session_scope() as db:
         alerts = db.scalars(select(TripRecord).where(TripRecord.kind == "weather_alert")).all()
         assert len(alerts) == 1
+
+
+def test_weather_notice_transitions_to_resolved_and_stale(client):
+    from weather_monitoring import alert_views
+    from datetime import timedelta
+    _, identity, _ = saved(client)
+    now = datetime(2026, 9, 24, tzinfo=timezone.utc)
+    with session_scope() as db:
+        notice = TripRecord(trip_id=identity, id="weather-alert-test", kind="weather_alert", payload={"date": "2026-09-25", "risks": ["storm"]})
+        state = TripRecord(trip_id=identity, id="weather-state-2026-09-25", kind="weather_state", payload={"risks": ["storm"], "checked_at": now.isoformat()})
+        db.add_all([notice, state]); db.flush()
+        assert alert_views(db, identity, [notice], now)[0]["status"] == "current"
+        state.payload = {"risks": [], "checked_at": now.isoformat()}
+        assert alert_views(db, identity, [notice], now)[0]["status"] == "resolved"
+        assert alert_views(db, identity, [notice], now + timedelta(hours=13))[0]["status"] == "stale"
+        assert alert_views(db, identity, [notice], now + timedelta(days=2))[0]["status"] == "expired"
+
+
+def test_scheduler_recovers_after_redis_and_enqueue_failure():
+    from monitor_worker import schedule_once
+    class Connection:
+        broken = True
+        values = {}
+        def set(self, key, value, **kwargs):
+            if self.broken: raise ConnectionError("do not log secrets")
+            if kwargs.get("nx") and key in self.values: return False
+            self.values[key] = value; return True
+        def delete(self, key): self.values.pop(key, None)
+    class Queue:
+        broken = True
+        calls = 0
+        def enqueue(self, *args, **kwargs):
+            if self.broken: raise ConnectionError("do not log secrets")
+            self.calls += 1
+    connection, queue = Connection(), Queue()
+    assert not schedule_once(connection, queue, 100)
+    connection.broken = False
+    assert not schedule_once(connection, queue, 100)
+    queue.broken = False
+    assert schedule_once(connection, queue, 100)
+    assert schedule_once(connection, queue, 100)
+    assert queue.calls == 1
 
 
 def test_offline_pack_has_owner_and_excludes_prices_and_recommended_bookings(client):

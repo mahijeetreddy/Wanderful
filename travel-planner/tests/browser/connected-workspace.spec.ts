@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { accessible } from "./accessibility";
 
 function fixture() {
   const hotels = [{ id: "original", snapshot_id: "original-snapshot", name: "Garden Hotel", estimated_total: 400, currency: "USD" }, { id: "alternate", snapshot_id: "alternate-snapshot", name: "River Hotel", estimated_total: 600, currency: "USD" }];
@@ -29,6 +30,7 @@ test("review a more expensive stay before applying the selection", async ({ page
   const dialog = page.getByRole("dialog", { name: "Review trip impact", exact: true });
   await expect(dialog).toContainText("+$200.00");
   await expect(dialog).toContainText("$1,400.00");
+  await accessible(page, "dialog[open]");
   expect(applied).toBe(false);
   await dialog.screenshot({ path: `test-results/decision-${info.project.name}.png`, animations: "disabled" });
   await dialog.getByRole("button", { name: "Apply reviewed choice" }).click();
@@ -68,5 +70,6 @@ test("record a linked payment without duplicating the booking cost", async ({ pa
   await expect(dialog).toContainText("$1,400.00");
   await expect(dialog).toContainText("$400.00");
   await expect(dialog.getByText("Hotel deposit", { exact: true })).toBeVisible();
+  await accessible(page, "dialog[open]");
   await dialog.screenshot({ path: `test-results/ledger-${info.project.name}.png`, animations: "disabled" });
 });

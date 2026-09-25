@@ -75,12 +75,23 @@ def live_report(query, max_requests):
 
 
 def runtime_report():
+    from sqlalchemy.exc import SQLAlchemyError
+    try:
+        return _runtime_report()
+    except SQLAlchemyError:
+        return {"mode": "runtime-aggregate", "passed": False, "status": "database_unavailable", "limitation": "Could not read telemetry. Check database connectivity and migrations; no schema changes were attempted."}
+
+
+def _runtime_report():
     """Read only aggregate timings; never print destinations, accounts, tokens or offers."""
-    from sqlalchemy import select
+    from sqlalchemy import select, inspect
     from database import session_scope
     from models import PlanJob, OfferSnapshot
     from runtime_store import metrics_snapshot, redis_client
     with session_scope() as db:
+        missing = sorted({"plan_jobs", "offer_snapshots"} - set(inspect(db.bind).get_table_names()))
+        if missing:
+            return {"mode": "runtime-aggregate", "passed": False, "status": "migration_required", "missing_tables": missing, "limitation": "Apply reviewed migrations separately. No schema changes were attempted."}
         jobs = db.scalars(select(PlanJob).order_by(PlanJob.created_at.desc()).limit(200)).all()
         snapshots = db.scalars(select(OfferSnapshot).order_by(OfferSnapshot.created_at.desc()).limit(1000)).all()
         full = [row.metrics_json["full_plan_ms"] for row in jobs if isinstance(row.metrics_json.get("full_plan_ms"), (int, float))]

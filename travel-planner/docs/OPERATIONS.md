@@ -41,6 +41,10 @@ Only after operator configuration, set `WEATHER_MONITORING_ENABLED=true` and run
 python monitor_worker.py
 ```
 
+Local Compose also provides an optional `monitoring` profile (`weather-monitor` service).
+It still requires the explicit feature flag in `.env` and already-applied schema. Nothing
+starts it during ordinary `docker compose up`; do not enable it against an unmigrated DB.
+
 This process consumes **weather-monitoring**, never **planning**. Its scheduler enqueues
 one capped batch every six-hour UTC bucket, deduplicated through Redis. Each batch makes
 at most 20 forecast requests. Exact destination coordinates share a cached forecast for
@@ -48,6 +52,12 @@ that bucket. Missing credentials, absent coordinates, out-of-window trips, unava
 forecasts and exhausted caps do not produce invented alerts. Users separately opt in on
 each saved trip. Stopping the worker or setting the feature flag false disables checking.
 The worker is not started or added to hosted infrastructure by implementation.
+
+Scheduler ticks retry transient Redis/enqueue failures without terminating the scheduler
+thread. A short-lived `wanderful:monitor-heartbeat` key indicates scheduler activity,
+not successful forecast delivery. Notices are labelled current, resolved, stale (no
+usable refresh within 12 hours), or expired. Only current notices on enabled subscriptions
+offer recovery previews. Repeated unchanged forecasts refresh freshness without new alerts.
 
 ## Evaluation and performance
 
@@ -73,6 +83,24 @@ These probes can consume the existing provider quota; none were run automaticall
 See [measured benchmark notes](BENCHMARKS.md). Targets are not guarantees.
 
 ## Disposable local acceptance checks
+
+Before any release, run the read-only preflight:
+
+```powershell
+python scripts/readiness.py --database --redis
+```
+
+It checks production settings, schema table/column presence, Redis, the dedicated vault
+mount and offline build assets without applying migrations or creating directories. It
+does not certify constraints/indexes or backups. Backup restoration remains a mandatory
+operator gate: restore a matching database/vault backup into an isolated environment,
+verify document hashes and owner-only downloads, verify trip/ledger counts, record the
+backup timestamps and results, and retain the originals. Never test restores against the
+active database. Apply hosted migrations and enable workers only after explicit approval.
+
+Current environment preflight (2026-09-25): missing search sessions/offer snapshots/trip
+records/selections/history tables and saved-trip revision; Redis unset; secure-cookie/CSRF
+flags not production-ready; dedicated vault mount absent. These settings were not changed.
 
 ```powershell
 python -m pytest -q

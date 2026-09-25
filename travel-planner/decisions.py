@@ -28,6 +28,25 @@ def airport_time(value, zone):
         return None
 
 
+def activity_interval(day, activity, zone):
+    """An explicit local range or elapsed duration; never invent an activity end."""
+    match = re.fullmatch(r"\s*(\d{1,2}):(\d{2})(?:\s*[-–—]\s*(\d{1,2}):(\d{2}))?\s*", str(activity.get("time", "")))
+    if not match:
+        return None, None
+    start = airport_time(f"{day.get('date')}T{int(match[1]):02}:{match[2]}", zone)
+    if not start:
+        return None, None
+    if match[3]:
+        end_day = start.date()
+        if (int(match[3]), int(match[4])) < (start.hour, start.minute):
+            end_day += timedelta(days=1)
+        return start, airport_time(f"{end_day.isoformat()}T{int(match[3]):02}:{match[4]}", zone)
+    minutes = activity.get("duration_minutes")
+    if type(minutes) is int and 0 < minutes <= 2880:
+        return start, (start.astimezone(timezone.utc) + timedelta(minutes=minutes)).astimezone(start.tzinfo)
+    return start, None
+
+
 def valid_point(value):
     return isinstance(value, dict) and all(isinstance(value.get(key), (int, float)) and not isinstance(value.get(key), bool) and abs(value[key]) <= limit for key, limit in (("lat", 90), ("lng", 180)))
 
@@ -89,15 +108,13 @@ def impact(trip, offer, kind, assumptions=None):
                 windows = {"available_from": start.isoformat(), "available_until": end.isoformat()}
                 for day in structured.get("days", []):
                     for index, activity in enumerate(day.get("activities", [])):
-                        match = re.fullmatch(r"(\d{1,2}):(\d{2})(?:\s*-.*)?", str(activity.get("time", "")))
-                        if not match:
+                        local, activity_end = activity_interval(day, activity, zone)
+                        if not local:
                             warnings.append(f"Timing not verified for {activity.get('title', 'an activity')}.")
                             continue
-                        local = airport_time(f"{day.get('date')}T{int(match[1]):02}:{match[2]}", zone)
-                        if not local:
-                            warnings.append("An activity time zone is unknown or ambiguous; timing impact is incomplete.")
-                            continue
-                        if local < start or local > end:
+                        if activity_end is None:
+                            warnings.append(f"End time not verified for {activity.get('title', 'an activity')}; only its start was checked.")
+                        if local.astimezone(timezone.utc) < start.astimezone(timezone.utc) or (activity_end or local).astimezone(timezone.utc) > end.astimezone(timezone.utc):
                             key = activity_key(day.get("day_number", 1), index, activity)
                             locked = (trip.get("constraints") or {}).get(key, (trip.get("constraints") or {}).get(activity_key(day.get("day_number", 1), index))) == "locked"
                             issues.append({"activity_key": key, "title": activity.get("title"), "date": day.get("date"), "locked": locked, "reason": "Outside available arrival/departure window"})

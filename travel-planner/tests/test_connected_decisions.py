@@ -31,6 +31,21 @@ def test_exact_money_and_timezone_ambiguity():
     assert airport_time("2027-11-07 01:30", "America/New_York") is None
 
 
+def test_activity_ranges_duration_midnight_and_dst(client):
+    from decisions import activity_interval
+    day = {"date": "2027-05-04"}
+    start, end = activity_interval(day, {"time": "23:00–01:00"}, "Europe/Lisbon")
+    assert end.day == 5 and end.hour == 1
+    _, end = activity_interval(day, {"time": "23:00", "duration_minutes": 120}, "Europe/Lisbon")
+    assert end.day == 5
+    assert activity_interval(day, {"time": "99:99"}, "Europe/Lisbon") == (None, None)
+    assert activity_interval({"date": "2027-03-14"}, {"time": "01:30-02:30"}, "America/New_York")[1] is None
+    _, trip = setup(client)
+    trip["structuredItinerary"]["days"] = [{**day, "day_number": 4, "activities": [{"title": "Long visit", "time": "13:00-15:00"}]}]
+    result = impact(trip, flight(), "flights")
+    assert result["affected_activities"][0]["title"] == "Long visit"
+
+
 def test_late_arrival_marks_conflicts_and_locked_activity_blocks(client):
     _, trip = setup(client)
     result = impact(trip, flight(), "flights")
@@ -77,6 +92,10 @@ def test_payment_for_booking_is_not_counted_twice_and_creation_is_idempotent(cli
     assert ledger["expected_minor"] == 60000
     assert ledger["remaining_expected_minor"] == 40000
     assert ledger["budget_remaining_minor"] == 140000
+    guardian = client.get(f"/api/trips/{trip_id}/intelligence").json["budget"]
+    assert guardian["actual"] == 200 and guardian["committed"] == 600
+    assert guardian["forecast"] == 600 and guardian["remaining"] == 1400
+    assert guardian["ledger"]["expected_minor"] == ledger["expected_minor"]
     retry = client.post(f"/api/trips/{trip_id}/records", json=payload)
     assert retry.status_code == 200
     assert retry.json["ledger"]["paid_minor"] == 20000

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { BookOpen, Loader2, Pencil, Trash2 } from "lucide-react";
 import { apiFetch, readApiJson } from "../../api/client";
+import { Modal } from "../search/Modal";
 
 type JournalEntry = { id: number; trip_id: number; body: string; created_at: string; updated_at: string };
 
@@ -40,15 +41,6 @@ export function JournalPanel({
   useEffect(() => {
     if (open && tripId) void refresh();
   }, [open, tripId]);
-
-  useEffect(() => {
-    if (!open) return undefined;
-    const handleKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  }, [open, onClose]);
 
   if (!open) return null;
 
@@ -103,7 +95,7 @@ export function JournalPanel({
   };
 
   return (
-    <div className="fixed inset-0 z-[90] bg-[#0e1518]/58 backdrop-blur-sm" onClick={onClose}>
+    <Modal label="Travel journal" onClose={onClose}>
       <aside
         className="absolute right-0 top-0 h-full w-[min(94vw,460px)] overflow-auto border-l border-[#3fb6c4]/12 bg-[#0e1518]/88 p-5 shadow-[-28px_0_90px_rgba(0,0,0,0.45)]"
         onClick={(event) => event.stopPropagation()}
@@ -126,7 +118,7 @@ export function JournalPanel({
         </div>
 
         <div className="rounded-[24px] border border-[#3fb6c4]/12 bg-[#3fb6c4]/[0.05] p-4">
-          <textarea
+          <textarea aria-label="New journal entry"
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             placeholder="Write a note - a booking confirmation, a reminder, a memory..."
@@ -155,7 +147,7 @@ export function JournalPanel({
             >
               {editingId === entry.id ? (
                 <div>
-                  <textarea
+                  <textarea aria-label="Edit journal entry"
                     value={editingBody}
                     onChange={(event) => setEditingBody(event.target.value)}
                     rows={3}
@@ -214,6 +206,6 @@ export function JournalPanel({
           ) : null}
         </div>
       </aside>
-    </div>
+    </Modal>
   );
 }

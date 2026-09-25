@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 
-TEST_DB = Path(".crewai_runtime") / "test-wanderful.db"
+TEST_DIRECTORY = TemporaryDirectory(prefix="wanderful-tests-")
+TEST_DB = Path(TEST_DIRECTORY.name) / "wanderful.db"
 TEST_DB.parent.mkdir(parents=True, exist_ok=True)
 os.environ["APP_ENV"] = "test"
 os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DB.resolve().as_posix()}"
@@ -17,6 +19,13 @@ import pytest
 
 from database import Base, engine
 from web_app import app
+
+
+@pytest.fixture(scope="session", autouse=True)
+def isolated_database_lifetime():
+    yield
+    engine.dispose()
+    TEST_DIRECTORY.cleanup()
 
 
 @pytest.fixture(autouse=True)

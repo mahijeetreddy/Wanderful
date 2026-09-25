@@ -5,14 +5,47 @@ No commits, deployments, hosted migrations, or service purchases.
 
 | Phase | Status | Acceptance evidence |
 | --- | --- | --- |
-| 1. Trustworthy search and selection | Core acceptance journeys verified; integration follow-ups remain | SQLite/PostgreSQL migrations; save/reopen/reload, booking status, account isolation and delayed logout tests |
-| 2. Flights and stays experience | Local regression gates passed; broader accessibility audit remains | Comparison, room rates, proximity sorting, keyboard dialogs and mobile coverage |
-| 3. Connected decisions | Preview/apply and exact ledger implemented; integration follow-ups remain | Signed revision-bound previews, timing conflicts, linked-payment arithmetic and desktop/mobile selection review |
+| 1. Trustworthy search and selection | Core local acceptance journeys verified | SQLite/PostgreSQL migrations; save/reopen/reload, booking status, account isolation and delayed logout tests |
+| 2. Flights and stays experience | Local journeys and automated accessibility scans verified | Comparison, room rates, proximity sorting, keyboard dialogs, axe scans and mobile coverage |
+| 3. Connected decisions | Ledger integration and duration-aware conflicts implemented | Signed revision-bound previews, overnight timing, linked-payment arithmetic and ledger-backed legacy responses |
 | 4. Operational reliability | Local regression gates passed; hosted validation excluded | Revision-safe records/undo, production offline reload/logout, PostgreSQL migration and disposable volume checks |
 | 5. Evaluation and monitoring | Implemented; live measurements outstanding | Fixture contracts, missing-credential handling, weather deduplication and no automatic trip mutation |
 
 Each phase must pass its checks before the next is considered complete. Live provider
 latency and hosted infrastructure are not verified by fixture tests.
+
+## Remaining-work implementation (2026-09-25)
+
+This section supersedes earlier pending implementation notes.
+
+- Saved-trip intelligence, legacy budget responses and disruption responses now use the
+  canonical ledger. Linked payments and commitments use identical expected/remaining
+  totals; the command center refreshes when the trip revision changes.
+- Selection timing checks use explicit activity ranges or duration minutes, including
+  overnight ranges and DST-aware elapsed durations. Missing/ambiguous ends are reported
+  as incomplete evidence instead of fabricated durations.
+- Weather scheduling retries transient failures, publishes an expiring scheduler heartbeat,
+  refreshes unchanged forecast freshness, and classifies current/resolved/stale/expired
+  notices. Historical notices do not offer recovery actions.
+- Journal/guidebook now use native shared dialogs with focus containment/restoration.
+  Added automated WCAG-tagged axe scans to desktop/mobile tool journeys. These checks
+  are not a substitute for user testing with every browser or assistive technology.
+- Patched frontend dependencies, including Vite 6.4.3; npm reported zero vulnerabilities
+  after installation. Production build and optional-monitoring Compose configuration pass.
+- Added a read-only release preflight and privacy-safe missing-schema telemetry reporting.
+  Actual environment blockers are documented in OPERATIONS.md, not silently changed.
+- Capped live provider probes returned hotel inventory in 5.31 seconds and flight inventory
+  in 9.28 seconds. Neither is a p95 or full-plan performance guarantee.
+- Backend fixture databases are now unique temporary files per process, preventing
+  collisions between verification runs. Clean full backend rerun: **116 passed in 142.81s**.
+  The production build and Compose configuration passed. Final full frontend run:
+  **34 checks passed in 2.7 minutes** (26 desktop/mobile browser journeys plus eight
+  pure logic checks). Integrated axe scans found no violations in the tested dialogs
+  and offline view; vault input naming and section-text contrast defects were fixed.
+
+Hosted migrations, Redis configuration, production flags, persistent-volume activation,
+backup restoration drills, and live end-to-end load benchmarks still require the separately
+authorized release environment. No commit, push, deployment or hosted mutation occurred.
 
 ## Latest increment: operational tools and monitoring (2026-09-24)
 
@@ -42,11 +75,9 @@ This section supersedes outstanding-work statements in the historical increments
   reload/logout. The offline fixture now waits for service-worker page control before
   disconnecting, rather than relying on registration activation alone.
 
-Known limitations: live end-to-end performance targets have not been measured; weather
-monitoring is not activated; hosted durability/backup validation requires operator work.
-Timing checks currently use activity start times rather than full-duration scheduling.
-Remaining legacy tool integration and broader accessibility auditing are not represented
-as complete by these focused tests. See [operations](OPERATIONS.md) and [benchmarks](BENCHMARKS.md).
+Historical limitations for this September 24 increment are superseded by the September 25
+implementation above. Live end-to-end targets, hosted activation, and backup validation
+remain release gates. See [operations](OPERATIONS.md) and [benchmarks](BENCHMARKS.md).
 
 ## Latest increment — connected workspace and vault (2026-09-23)
 

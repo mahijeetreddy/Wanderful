@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Compass, Loader2, RefreshCw } from "lucide-react";
 import { apiFetch, readApiJson } from "../../api/client";
+import { Modal } from "../search/Modal";
 
 type GuidebookContent = {
   overview: string;
@@ -59,15 +60,6 @@ export function GuidebookPanel({
     if (open && tripId) void load();
   }, [open, tripId]);
 
-  useEffect(() => {
-    if (!open) return undefined;
-    const handleKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  }, [open, onClose]);
-
   if (!open) return null;
 
   const generate = async () => {
@@ -100,7 +92,7 @@ export function GuidebookPanel({
   const content = guidebook?.content;
 
   return (
-    <div className="fixed inset-0 z-[90] grid place-items-center bg-[#0e1518]/72 px-4 backdrop-blur-md" onClick={onClose}>
+    <Modal label="Destination guidebook" onClose={onClose}>
       <section
         className="max-h-[88vh] w-[min(94vw,760px)] overflow-auto rounded-[32px] border border-[#3fb6c4]/16 bg-[#0e1518]/92 p-6"
         onClick={(event) => event.stopPropagation()}
@@ -185,7 +177,7 @@ export function GuidebookPanel({
           </div>
         ) : null}
       </section>
-    </div>
+    </Modal>
   );
 }
 

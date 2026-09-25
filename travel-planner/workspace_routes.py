@@ -288,7 +288,8 @@ def make_workspace_blueprint():
                 trip.updated_at = utcnow()
                 db.flush()
             alerts = db.scalars(select(TripRecord).where(TripRecord.trip_id == trip_id, TripRecord.kind == "weather_alert").order_by(TripRecord.created_at.desc()).limit(20)).all()
-            return jsonify({"configured": enabled(), "enabled": bool(subscription and subscription.payload.get("enabled")), "alerts": [{"id": row.id, **row.payload} for row in alerts], "trip": _response_trip(db, trip)})
+            from weather_monitoring import alert_views
+            return jsonify({"configured": enabled(), "enabled": bool(subscription and subscription.payload.get("enabled")), "alerts": alert_views(db, trip_id, alerts), "trip": _response_trip(db, trip)})
 
     @bp.post("/api/trips/<int:trip_id>/undo")
     @require_active_user

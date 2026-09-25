@@ -54,7 +54,7 @@ export function TripIntelligencePanel({ trip, onClose, onTripUpdated }: { trip: 
       .catch((error) => { if (!controller.signal.aborted) setStatus(error instanceof Error ? error.message : "Could not load the command center."); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [trip?.id]);
+  }, [trip?.id, trip?.revision]);
 
   useEffect(() => {
     const updateConnection = () => setIsOnline(navigator.onLine);

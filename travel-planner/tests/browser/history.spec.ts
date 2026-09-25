@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { accessible } from "./accessibility";
 test("itinerary restore is explicit and retains the choice on revision conflict", async ({ page }, info) => {
   const trip = { id: "901", revision: 3, name: "History trip", destination: "Lisbon", savedAt: "2026-09-24", dateRange: "September", itinerary: "Current", form: { currency_code: "USD" }, options: { hotels: [], flights: [] }, structuredItinerary: { days: [] } };
   let attempts = 0;
@@ -22,6 +23,7 @@ test("itinerary restore is explicit and retains the choice on revision conflict"
   await dialog.getByRole("button", { name: "Restore selected revision" }).click();
   await expect(dialog.getByRole("alert")).toContainText("Trip changed elsewhere");
   await expect(dialog.getByRole("radio")).toBeChecked();
+  await accessible(page, "dialog[open]");
   await dialog.screenshot({ path: `test-results/history-${info.project.name}.png` });
   await page.keyboard.press("Escape");
   await expect(opener).toBeFocused();

@@ -29,3 +29,20 @@ before making product latency claims. Commands are in [operations](OPERATIONS.md
 | Missing-day rate | <1% | Pending |
 | Cache-hit rate | >30% | Pending |
 | Cross-account access failures | 0 | Pending |
+
+## Capped live probe (2026-09-25)
+
+One network-enabled SerpAPI hotel search returned inventory successfully in **5,307.55 ms**.
+The synthetic query used Lisbon, October 22–25, 2026, two adults, USD; no personal data or
+bookings. An earlier sandbox-restricted attempt failed after 2,057.55 ms. No automatic
+retries or full-plan generation were performed. One successful sample cannot establish
+p95, cache behavior, flight latency, or end-to-end planning performance.
+
+Runtime aggregation is blocked by missing `offer_snapshots` in the configured database;
+it now returns `migration_required` instead of an unhandled traceback. Redis is unset.
+Hosted migrations and service activation remain separate authorized operator steps.
+
+A second capped probe, for a synthetic LAX–JFK round trip on October 22–25, 2026,
+two adults in USD, returned flight inventory in **9,281.64 ms**. This is also one sample,
+not proof of the first-options p95 target. Total network-enabled probes: one hotel and
+one flight request; no bookings or background monitoring were started.

@@ -1,0 +1,11 @@
+{
+  "engine": "google_flights",
+  "departure_id": "LAX",
+  "arrival_id": "JFK",
+  "outbound_date": "2026-10-22",
+  "return_date": "2026-10-25",
+  "adults": 2,
+  "currency": "USD",
+  "hl": "en",
+  "gl": "us"
+}

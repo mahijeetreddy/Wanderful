@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { accessible } from "./accessibility";
 
 test("stay map separates viewing from choosing and dialogs recover with keyboard", async ({ page }, testInfo) => {
   const hotels = [
@@ -51,6 +52,7 @@ test("stay map separates viewing from choosing and dialogs recover with keyboard
   providerAvailable = true;
   await dialog.getByRole("button", { name: "Retry details" }).press("Enter");
   await expect(dialog.getByText("Fixture address", { exact: true })).toBeVisible();
+  await accessible(page, "dialog[open]");
   const close = dialog.getByRole("button", { name: "Close details" });
   await close.focus();
   await page.keyboard.press("Tab");

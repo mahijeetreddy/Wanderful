@@ -94,15 +94,15 @@ The five-phase product upgrade is underway, not complete:
 
 | Phase | Current state |
 | --- | --- |
-| 1. Trustworthy search and selection | Core journeys verified; legacy tool integration remains |
-| 2. Flights and stays experience | In progress: comparison, filters, room-rate snapshots and flight-leg summaries implemented |
-| 3. Connected trip decisions | Preview/apply, timing conflicts and exact booking/payment accounting implemented; integration checks remain |
+| 1. Trustworthy search and selection | Core local journeys verified; hosted schema activation remains separate |
+| 2. Flights and stays experience | Comparison, filters, room-rate snapshots and flight-leg summaries implemented; automated accessibility and keyboard journeys covered |
+| 3. Connected trip decisions | Preview/apply, overnight activity timing, exact accounting and ledger-backed legacy budget responses implemented |
 | 4. Operational reliability | Individual records, offline reload/logout, explicit undo and persistent-vault configuration implemented; local regression gates documented below |
 | 5. Provider evaluation and weather monitoring | Fixture/live-capped evaluation and opt-in weather queue implemented; live performance measurements outstanding |
 
 Verification includes backend and desktop/mobile browser suites, production builds,
 production offline reloads, disposable PostgreSQL migrations, and local volume persistence.
-Latest local run (September 24, 2026): **110 backend tests and 30 frontend checks passed**;
+Latest local run (September 25, 2026): **116 backend tests and 34 frontend checks passed**;
 the production build passed.
 These are local fixture-based checks, not live-provider latency or availability guarantees.
 See [implementation status](travel-planner/docs/IMPLEMENTATION_STATUS.md)

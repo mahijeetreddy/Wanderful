@@ -47,5 +47,17 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
+  weather-monitor:
+    profiles: [monitoring]
+    build: .
+    command: python monitor_worker.py
+    env_file: .env
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgresql+psycopg://wanderful:wanderful@postgres:5432/wanderful
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
 volumes:
   travel_vault:

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { apiFetch, readApiJson } from "../../api/client";
 import type { SavedTrip } from "../../domain/travel";
-type WeatherState = { configured: boolean; enabled: boolean; trip: SavedTrip; alerts: { id: string; date: string; message: string }[] };
+type WeatherState = { configured: boolean; enabled: boolean; trip: SavedTrip; alerts: { id: string; date: string; message: string; status?: "current" | "resolved" | "stale" | "expired" }[] };
 export function WeatherMonitoring({ trip, onUpdated, onPreview }: { trip: SavedTrip; onUpdated: (trip: SavedTrip) => void; onPreview: (date: string) => void }) {
   const [state, setState] = useState<WeatherState | null>(null), [error, setError] = useState(""), [busy, setBusy] = useState(false);
   useEffect(() => {
@@ -20,7 +20,7 @@ export function WeatherMonitoring({ trip, onUpdated, onPreview }: { trip: SavedT
     <h3 className="text-xl">Weather watch</h3><p className="mt-2 text-sm text-white/75">Optional six-hour checks within the five-day forecast. In-app alerts only. Your itinerary never changes automatically.</p>
     {error && <p role="alert" className="mt-3 text-amber-100">{error}</p>}
     {state && <><button disabled={busy || (!state.configured && !state.enabled)} onClick={() => void toggle()} className="mt-4 min-h-11 rounded-full border border-white/25 px-5 disabled:opacity-50">{!state.configured ? "Not configured" : state.enabled ? "Turn off weather watch" : "Enable weather watch"}</button>
-      {state.alerts.map(alert => <article key={alert.id} className="mt-4 rounded-xl border border-amber-200/25 p-4"><p>{alert.message}</p><button className="mt-3 min-h-11 rounded-full border border-white/25 px-4" onClick={() => onPreview(alert.date)}>Preview indoor-day recovery</button></article>)}
+      {state.alerts.map(alert => <article key={alert.id} className="mt-4 rounded-xl border border-amber-200/25 p-4"><p className="mb-2 text-sm capitalize text-white/75">{alert.status || "stale"}</p><p>{alert.message}</p>{alert.status === "current" && state.enabled ? <button className="mt-3 min-h-11 rounded-full border border-white/25 px-4" onClick={() => onPreview(alert.date)}>Preview indoor-day recovery</button> : <p className="mt-2 text-sm text-white/75">Historical notice. No recovery action is suggested.</p>}</article>)}
     </>}
   </section>;
 }

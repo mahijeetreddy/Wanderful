@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { accessible } from "./accessibility";
 
 test("prepared trip survives a production offline reload; logout clears IndexedDB", async ({ page, context }, info) => {
   let privateRequests = 0;
@@ -35,6 +36,7 @@ test("prepared trip survives a production offline reload; logout clears IndexedD
   await page.reload();
   await expect(page.getByRole("heading", { name: "Lisbon offline" })).toBeVisible();
   await expect(page.getByText("Visit the museum", { exact: true })).toBeVisible();
+  await accessible(page, "main");
   expect(privateRequests).toBe(0);
   await page.screenshot({ path: `test-results/offline-${info.project.name}.png`, fullPage: true });
   await context.setOffline(false);

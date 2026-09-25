@@ -2,10 +2,30 @@
 import os
 import threading
 import time
+import logging
 from rq import Queue, Worker, SimpleWorker
 from runtime_store import rq_redis_client
 from config import settings, validate_production_settings
 from weather_monitoring import enabled, run_monitoring, QUEUE, INTERVAL
+
+
+def schedule_once(connection, queue, now=None):
+    """Transient Redis/enqueue failures must not kill the scheduling thread."""
+    bucket = int(time.time() if now is None else now) // INTERVAL
+    lock = f"wanderful:monitor-scheduled:{bucket}"
+    acquired = False
+    try:
+        connection.set("wanderful:monitor-heartbeat", str(time.time()), ex=180)
+        acquired = bool(connection.set(lock, "1", nx=True, ex=INTERVAL))
+        if acquired:
+            queue.enqueue(run_monitoring, max_requests=20, job_timeout=600, result_ttl=INTERVAL, job_id=f"weather-{bucket}")
+        return True
+    except Exception:
+        if acquired:
+            try: connection.delete(lock)
+            except Exception: pass
+        logging.getLogger(__name__).warning("Weather scheduling unavailable; retrying on the next tick.")
+        return False
 
 
 def main():
@@ -17,13 +37,7 @@ def main():
     queue = Queue(QUEUE, connection=connection)
     def schedule():
         while True:
-            bucket = int(time.time()) // INTERVAL
-            lock = f"wanderful:monitor-scheduled:{bucket}"
-            if connection.set(lock, "1", nx=True, ex=INTERVAL):
-                try: queue.enqueue(run_monitoring, max_requests=20, job_timeout=600, result_ttl=INTERVAL, job_id=f"weather-{bucket}")
-                except Exception:
-                    connection.delete(lock)
-                    raise
+            schedule_once(connection, queue)
             time.sleep(60)
     threading.Thread(target=schedule, daemon=True).start()
     worker_class = Worker if hasattr(os, "fork") else SimpleWorker

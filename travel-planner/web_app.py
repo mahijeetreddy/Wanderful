@@ -453,7 +453,7 @@ def trip_intelligence_get(trip_id: int):
             "live": build_live_view(trip),
             "constraints": trip.get("constraints") or {},
             "live_state": trip.get("liveState") or {},
-            "budget": build_budget_guardian(trip),
+            "budget": build_budget_guardian(trip, owner_id=user["id"]),
             "disruption_history": trip.get("disruptionHistory") or [],
         }
     )
@@ -470,7 +470,7 @@ def trip_budget_put(trip_id: int):
     expected = _required_revision(body)
     state = normalize_budget_state(body)
     trip = update_trip_budget(user["id"], trip_id, state, expected)
-    return jsonify({"trip": trip, "budget": build_budget_guardian(trip or {})})
+    return jsonify({"trip": trip, "budget": build_budget_guardian(trip or {}, owner_id=user["id"])})
 
 
 @app.get("/api/trips/<int:trip_id>/documents")
@@ -627,7 +627,7 @@ def trip_disruption_post(trip_id: int):
         "trip": updated,
         "health": assess_trip(updated or trip),
         "live": build_live_view(updated or trip),
-        "budget": build_budget_guardian(updated or trip),
+        "budget": build_budget_guardian(updated or trip, owner_id=user["id"]),
     })
 
 

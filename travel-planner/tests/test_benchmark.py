@@ -23,3 +23,21 @@ def test_empty_runtime_reports_missing_measurements(monkeypatch):
     assert report["full_plan_p95_ms"] is None
     assert report["cache_hit_rate"] is None
     assert report["offer_completeness_rate"] is None
+
+
+def test_runtime_reports_missing_schema_without_migrating(monkeypatch):
+    class EmptySchema:
+        def get_table_names(self): return []
+    monkeypatch.setattr("sqlalchemy.inspect", lambda bind: EmptySchema())
+    result = runtime_report()
+    assert not result["passed"] and result["status"] == "migration_required"
+    assert result["missing_tables"] == ["offer_snapshots", "plan_jobs"]
+
+
+def test_runtime_connection_failure_does_not_print_credentials(monkeypatch):
+    from sqlalchemy.exc import OperationalError
+    def unavailable(): raise OperationalError("secret-query", {}, Exception("secret-password"))
+    monkeypatch.setattr("evaluations.benchmark._runtime_report", unavailable)
+    result = runtime_report()
+    assert result["status"] == "database_unavailable"
+    assert "secret" not in str(result)

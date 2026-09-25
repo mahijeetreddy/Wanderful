@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { accessible } from "./accessibility";
 
 const initial = {
   form: { origin: "LAX", destination: "Lisbon", start_date: "2027-05-01", end_date: "2027-05-04", budget: "3200", adults: "2", currency_code: "USD", interests: "food" },
@@ -133,6 +134,7 @@ test("flight filters and three-offer comparison work without replacing a selecti
   const dialog = page.getByRole("dialog", { name: "Compare flights", exact: true });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole("table")).toContainText("USD 300");
+  await accessible(page, "dialog[open]");
   await dialog.screenshot({ path: `artifacts/ui-audit/flight-comparison-${testInfo.project.name}.png`, animations: "disabled" });
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);

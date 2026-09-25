@@ -325,7 +325,10 @@ def normalize_budget_state(value: Any) -> dict[str, Any]:
     return {"expenses": expenses, "members": members[:50], "settlements": settlements[:300], "reserve_percent": reserve_percent, "updated_at": datetime.utcnow().isoformat() + "Z"}
 
 
-def build_budget_guardian(trip: dict[str, Any]) -> dict[str, Any]:
+def build_budget_guardian(trip: dict[str, Any], *, owner_id=None) -> dict[str, Any]:
+    if owner_id is not None:
+        from budget_view import saved_budget
+        return saved_budget(owner_id, trip)
     state = normalize_budget_state(trip.get("budgetState"))
     structured = _dict(trip.get("structuredItinerary"))
     categories = [item for item in structured.get("budget_categories", []) if isinstance(item, dict)]

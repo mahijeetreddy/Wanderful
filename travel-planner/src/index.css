@@ -1007,6 +1007,7 @@ button:disabled {
 .document-card:hover { transform:translateY(-2px); border-color:rgba(241,191,117,.2); background:rgba(241,191,117,.04); }
 
 /* Workspace legibility and keyboard/touch affordances; landing decoration is unchanged. */
+.trip-dialog .section-kicker { color: #96b8bc; }
 :is(.trip-dialog, .results-workspace) :is([class~="text-white/22"], [class~="text-white/25"], [class~="text-white/28"], [class~="text-white/30"], [class~="text-white/35"], [class~="text-white/36"], [class~="text-white/38"], [class~="text-white/40"], [class~="text-white/42"], [class~="text-white/45"], [class~="text-white/46"], [class~="text-white/48"], [class~="text-white/50"], [class~="text-white/52"], [class~="text-white/55"], [class~="text-white/56"], [class~="text-white/58"]) { color: rgba(255,255,255,.76); }
 :is(.trip-dialog, .results-workspace) :is(button, select, summary) { min-height: 44px; }
 :is(.trip-dialog, .results-workspace) button { min-width: 44px; }

@@ -33,6 +33,12 @@ and the [product tour with screenshots](../README.md#product-tour).
 See [operations and evaluation commands](docs/OPERATIONS.md) for offline preparation,
 the separate disabled-by-default weather worker, capped provider probes, and runtime metrics.
 
+The remaining local hardening includes ledger-backed legacy budget responses, overnight
+activity timing checks, resolved/stale weather notices, scheduler retry recovery, accessible
+journal/guidebook dialogs and automated accessibility scans. A read-only release preflight
+reports missing schema/configuration without changing hosted services. Live hotel/flight
+probe samples are recorded in [benchmarks](docs/BENCHMARKS.md), not advertised as p95 guarantees.
+
 Implemented additions include independent provider status/retry, immutable server-owned
 offer snapshots, retained selected quotes on refresh, three-flight comparison, flight
 filters, outbound/return summaries with local arrival-day changes, and selectable hotel

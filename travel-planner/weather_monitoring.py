@@ -78,6 +78,7 @@ def record_forecast(trip_id, payload, now=None):
             state_id = "weather-state-" + date
             previous = db.get(TripRecord, (trip_id, state_id))
             if previous and previous.payload.get("risks") == risks:
+                previous.payload = {**previous.payload, "checked_at": now.isoformat()}
                 continue
             state = {"risks": risks, "checked_at": now.isoformat()}
             if previous: previous.payload = state
@@ -89,6 +90,25 @@ def record_forecast(trip_id, payload, now=None):
                 db.add(TripRecord(trip_id=trip_id, id=identity, kind="weather_alert", payload={"date": date, "risks": risks, "message": f"Forecast change for {date}: {', '.join(risks)}.", "created_at": now.isoformat(), "source": "OpenWeather five-day forecast", "recovery": "Review an indoor-day recovery; no changes have been applied."}))
                 created += 1
     return {"status": "checked", "alerts": created}
+
+
+def alert_views(db, trip_id, alerts, now=None):
+    """Keep history visible without presenting old forecasts as actionable warnings."""
+    now = now or datetime.now(timezone.utc)
+    result = []
+    for row in alerts:
+        payload = row.payload
+        state = db.get(TripRecord, (trip_id, "weather-state-" + payload.get("date", "")))
+        status = "stale"
+        if state:
+            try:
+                checked = datetime.fromisoformat(state.payload["checked_at"])
+                if checked.tzinfo is not None and timedelta(0) <= now - checked <= timedelta(hours=12):
+                    status = "current" if state.payload.get("risks") == payload.get("risks") else "resolved"
+            except (KeyError, TypeError, ValueError): pass
+        if payload.get("date", "") < now.date().isoformat(): status = "expired"
+        result.append({"id": row.id, **payload, "status": status, "checked_at": state.payload.get("checked_at") if state else None})
+    return result
 
 
 def run_monitoring(max_requests=20):

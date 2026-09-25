@@ -1,0 +1,8 @@
+{
+  "engine": "google_hotels",
+  "q": "Hotels in Lisbon",
+  "check_in_date": "2026-10-22",
+  "check_out_date": "2026-10-25",
+  "adults": 2,
+  "currency": "USD"
+}
