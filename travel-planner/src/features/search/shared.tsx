@@ -211,7 +211,7 @@ export function useEscapeToClose(active: boolean, onClose: () => void) {
       return undefined;
     }
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
+      if (event.key === "Escape" && !document.querySelector("dialog[open]")) {
         onClose();
       }
     };

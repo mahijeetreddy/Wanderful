@@ -14,9 +14,11 @@ Wanderful goes beyond generating a static itinerary. It gives travelers one plac
 - **Flights and stays workspace:** Filter flights, compare up to three options, inspect hotel details and choose provider-supplied room rates. Selected quotes retain their identity and original price when results refresh.
 - **Interactive route maps:** See each day's stops in order and understand how to move between them.
 - **Trip Health:** Detect timing, weather, budget, evidence, and resilience risks before they become problems.
-- **Budget Guardian:** Review budget estimates, expenses, and a configurable reserve. An exact commitment/payment ledger is planned.
+- **Budget Guardian:** Track exact-currency planned costs, commitments, linked payments, and a configurable reserve without double counting.
 - **Disruption Autopilot:** Preview and apply safe itinerary repairs for rain, delays, fatigue, or budget pressure.
-- **Offline Companion:** Prepare a local trip pack. Reliable offline reloads and account-scoped IndexedDB storage are part of the upcoming hardening work.
+- **Offline Companion:** Prepare an account-scoped trip pack and reopen it read-only at `/offline`, including after an offline reload. Explicit logout removes device copies.
+- **Plan history:** Restore earlier itinerary and selection revisions without undoing payments, settlements, or documents.
+- **Weather monitoring:** Optional, disabled-by-default forecast checks with deduplicated in-app alerts and explicit recovery previews; no automatic itinerary changes.
 - **Group expenses:** Split shared costs, track balances, and settle debts with a simple group workspace.
 - **Travel document vault:** Keep tickets, bookings, insurance, and identity documents attached to the trip.
 - **PDF export:** Download a concise itinerary for sharing or offline reference.
@@ -95,21 +97,24 @@ The five-phase product upgrade is underway, not complete:
 | 1. Trustworthy search and selection | Core journeys verified; legacy tool integration remains |
 | 2. Flights and stays experience | In progress: comparison, filters, room-rate snapshots and flight-leg summaries implemented |
 | 3. Connected trip decisions | Preview/apply, timing conflicts and exact booking/payment accounting implemented; integration checks remain |
-| 4. Operational reliability | Individual expense records and persistent-vault configuration implemented; offline/undo work remains |
-| 5. Provider evaluation and weather monitoring | Pending |
+| 4. Operational reliability | Individual records, offline reload/logout, explicit undo and persistent-vault configuration implemented; local regression gates documented below |
+| 5. Provider evaluation and weather monitoring | Fixture/live-capped evaluation and opt-in weather queue implemented; live performance measurements outstanding |
 
-Local verification on September 23, 2026: **100 backend tests**, **24 frontend checks**
-(18 browser journeys and 6 pure logic checks across desktop/mobile projects), and a
-successful production build. These are fixture-based checks, not live-provider latency
-or availability guarantees. See [implementation status](travel-planner/docs/IMPLEMENTATION_STATUS.md)
+Verification includes backend and desktop/mobile browser suites, production builds,
+production offline reloads, disposable PostgreSQL migrations, and local volume persistence.
+Latest local run (September 24, 2026): **110 backend tests and 30 frontend checks passed**;
+the production build passed.
+These are local fixture-based checks, not live-provider latency or availability guarantees.
+See [implementation status](travel-planner/docs/IMPLEMENTATION_STATUS.md)
 for evidence and remaining limitations.
 
 Reopened trips use explicit Save to update the original saved trip with revision checking;
 conflicts retain the local draft. Budget, constraints and disruption-apply routes now also
 require a revision. Selection changes have a review step, and linked payments are counted
 once. See [vault storage and migration](travel-planner/docs/VAULT_STORAGE.md) for local
-volume configuration and safe file verification. Weather monitoring is not yet implemented;
-disruption recovery is user-triggered. Groups remain owner-managed, without invitations
+volume configuration and safe file verification. Weather monitoring is implemented but
+disabled by default; recovery always requires user action. See the [operations guide](travel-planner/docs/OPERATIONS.md).
+Groups remain owner-managed, without invitations
 or shared editing.
 
 Wanderful is in controlled beta. New accounts require administrator approval before live planning is enabled. Provider prices and availability are time-sensitive and are not guarantees. Wanderful does not sell travel or process bookings; travelers should confirm booking terms, entry requirements, and final details with the relevant provider.

@@ -11,6 +11,13 @@ test("prepared trip survives a production offline reload; logout clears IndexedD
   expect(privateRequests).toBe(0);
   await page.evaluate(async () => {
     await navigator.serviceWorker.ready;
+    // An active registration may not yet control this first page. Wait for
+    // clients.claim() before simulating loss of the network.
+    if (!navigator.serviceWorker.controller) {
+      await new Promise<void>(resolve => navigator.serviceWorker.addEventListener(
+        "controllerchange", () => resolve(), { once: true }
+      ));
+    }
     localStorage.setItem("wanderful.offline-account", "701");
     localStorage.setItem("wanderful.offline-generation", "fixture-generation");
     await new Promise<void>((resolve, reject) => {

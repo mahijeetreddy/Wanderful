@@ -6,13 +6,47 @@ No commits, deployments, hosted migrations, or service purchases.
 | Phase | Status | Acceptance evidence |
 | --- | --- | --- |
 | 1. Trustworthy search and selection | Core acceptance journeys verified; integration follow-ups remain | SQLite/PostgreSQL migrations; save/reopen/reload, booking status, account isolation and delayed logout tests |
-| 2. Flights and stays experience | In progress | Eighteen desktop/mobile journeys and six pure logic checks pass; production build passes |
+| 2. Flights and stays experience | Local regression gates passed; broader accessibility audit remains | Comparison, room rates, proximity sorting, keyboard dialogs and mobile coverage |
 | 3. Connected decisions | Preview/apply and exact ledger implemented; integration follow-ups remain | Signed revision-bound previews, timing conflicts, linked-payment arithmetic and desktop/mobile selection review |
-| 4. Operational reliability | In progress | Individual records, legacy import view, vault storage safeguards and local volume configuration; remaining gates listed below |
-| 5. Evaluation and monitoring | Pending | Pending |
+| 4. Operational reliability | Local regression gates passed; hosted validation excluded | Revision-safe records/undo, production offline reload/logout, PostgreSQL migration and disposable volume checks |
+| 5. Evaluation and monitoring | Implemented; live measurements outstanding | Fixture contracts, missing-credential handling, weather deduplication and no automatic trip mutation |
 
 Each phase must pass its checks before the next is considered complete. Live provider
 latency and hosted infrastructure are not verified by fixture tests.
+
+## Latest increment: operational tools and monitoring (2026-09-24)
+
+This section supersedes outstanding-work statements in the historical increments below.
+
+- Added explicit itinerary/selection undo; conflicts preserve the selected revision.
+  Payments, settlements, documents, and booking status are not implicitly undone.
+- Offline packs use account-scoped IndexedDB and versioned application assets. The
+  read-only `/offline` entry survives a prepared offline reload. API responses, vault
+  documents, and map tiles are excluded from shared caches; logout removes device copies.
+- Added exact reserve accounting, direct workspace tools, coordinate/source persistence,
+  labelled straight-line stay proximity, and mandatory revisions for selection writes.
+- Added opt-in weather monitoring on a separate Redis/RQ queue, disabled by default.
+  Checks share forecast requests, deduplicate alerts, and never change trips or email users.
+- Added recorded-fixture evaluations, capped explicit live probes, aggregate runtime
+  timing/completeness/cache/handoff reports, and missing-data reporting.
+- Disposable PostgreSQL migration through revision 08 and local named-volume fixture
+  persistence across container replacement passed. Only labelled test resources were
+  removed; hosted services and actual vault data were not changed.
+- Fixed nested-dialog Escape handling so closing history preserves the saved-trips
+  drawer and returns focus. Desktop/mobile history regressions pass.
+- Latest full backend suite: **110 passed** in 194.00 seconds, including the added
+  missing-runtime-telemetry regression. Production TypeScript/Vite build passed.
+  Eight recorded provider-contract scenarios passed without live provider requests.
+  Full frontend run: **30 checks passed** in 1.9 minutes (22 browser journeys and eight
+  pure logic checks across desktop/mobile projects). This includes production offline
+  reload/logout. The offline fixture now waits for service-worker page control before
+  disconnecting, rather than relying on registration activation alone.
+
+Known limitations: live end-to-end performance targets have not been measured; weather
+monitoring is not activated; hosted durability/backup validation requires operator work.
+Timing checks currently use activity start times rather than full-duration scheduling.
+Remaining legacy tool integration and broader accessibility auditing are not represented
+as complete by these focused tests. See [operations](OPERATIONS.md) and [benchmarks](BENCHMARKS.md).
 
 ## Latest increment — connected workspace and vault (2026-09-23)
 

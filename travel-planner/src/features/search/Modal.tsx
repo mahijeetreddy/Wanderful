@@ -18,7 +18,12 @@ export function Modal({ children, label, onClose }: { children: ReactNode; label
   }, []);
   return createPortal(<dialog ref={ref} aria-label={label}
     onKeyDown={(event) => {
-      if (event.key === "Escape") { event.stopPropagation(); return; }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+        return;
+      }
       if (event.key !== "Tab") return;
       const dialog = event.currentTarget;
       const controls = Array.from(dialog.querySelectorAll<HTMLElement>(
@@ -35,7 +40,7 @@ export function Modal({ children, label, onClose }: { children: ReactNode; label
         event.preventDefault(); first.focus();
       }
     }}
-    onCancel={(event) => { event.preventDefault(); onClose(); }}
+    onCancel={(event) => { event.preventDefault(); event.stopPropagation(); onClose(); }}
     onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}
     className="trip-dialog fixed inset-0 m-0 h-dvh max-h-none w-screen max-w-none overflow-y-auto border-0 bg-[#0e1518]/80 p-4 text-white backdrop:backdrop-blur-md open:grid open:place-items-center">
     {children}

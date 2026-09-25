@@ -23,12 +23,15 @@ budget and interests, not generic suggestions.
 
 ## Status
 
-The product upgrade is in progress. Connected selection previews and an exact-money
-ledger are implemented, with operational reliability work underway. The main reopened
+Connected selection previews, an exact-money ledger, revision-based undo, account-scoped
+offline reloads, and opt-in weather monitoring are implemented locally. The main reopened
 workspace updates the original trip with revision checking; stale drafts are retained
-for reconciliation. Not all phase acceptance gates are complete. See
+for reconciliation. Live provider performance and hosted operation remain unverified. See
 [implementation status](docs/IMPLEMENTATION_STATUS.md)
 and the [product tour with screenshots](../README.md#product-tour).
+
+See [operations and evaluation commands](docs/OPERATIONS.md) for offline preparation,
+the separate disabled-by-default weather worker, capped provider probes, and runtime metrics.
 
 Implemented additions include independent provider status/retry, immutable server-owned
 offer snapshots, retained selected quotes on refresh, three-flight comparison, flight

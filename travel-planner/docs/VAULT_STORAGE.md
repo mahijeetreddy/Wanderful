@@ -42,5 +42,7 @@ references them. Symlinks and nested directories are rejected. Source cleanup, b
 and retention policies require a separate explicit operator decision.
 
 Automated tests cover reopening storage, safe paths, exclusive creation, mount validation,
-repeatable copy/verification, and authenticated downloads. A real container-recreation
-test remains a separate acceptance check; unit tests do not prove hosted durability.
+repeatable copy/verification, and authenticated downloads. On 2026-09-24, the disposable
+local acceptance script verified identical fixture bytes across two containers using
+the same named volume, then removed only its labelled fixture resources. This verifies
+local volume persistence, not hosted deployment, backups, or production durability.

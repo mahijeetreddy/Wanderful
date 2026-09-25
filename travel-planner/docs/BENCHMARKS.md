@@ -16,6 +16,9 @@ before making product latency claims. Commands are in [operations](OPERATIONS.md
 - PostgreSQL additive upgrade/schema drift/legacy preservation and mounted-volume
   container recreation checks passed locally. Temporary fixture resources were removed.
 - Live probes were not run; no quota was consumed. No production latency claim is made.
+- Repeat fixture run at 23:16 UTC: eight cases passed, classification p95 **0.030800 ms**
+  while backend/browser checks were also running. Variation is local processing overhead,
+  not a measurement of provider response time or full planning latency.
 
 | Metric | Target | Measured |
 |---|---:|---:|
