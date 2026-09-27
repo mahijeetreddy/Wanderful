@@ -14,6 +14,22 @@ No commits, deployments, hosted migrations, or service purchases.
 Each phase must pass its checks before the next is considered complete. Live provider
 latency and hosted infrastructure are not verified by fixture tests.
 
+## Offline CI regression fix (2026-09-27)
+
+- Reproduced both desktop/mobile offline reload failures locally with CI's bundled
+  Chromium. Vite preview's `Vary: Origin` made module/style requests miss precached
+  responses when matched using the incoming request's headers.
+- Service-worker lookups now use the same canonical pathname as precaching, only
+  within the existing same-origin public build-asset allowlist. API responses,
+  documents, query-string URLs and non-GET requests remain excluded.
+- Local browser tests now use bundled Chromium too. Added offline script/style
+  readability assertions; retained real offline reload, accessibility and cross-tab
+  logout/IndexedDB cleanup checks without increasing assertion timeouts.
+- Validation: production build passed; targeted offline checks **2 passed (1.8m)**;
+  full suite with `CI=true` **34 passed (2.4m)**. These are local Windows results,
+  not a rerun of hosted Linux GitHub Actions. Backend tests were not rerun for this
+  frontend-only change. No commit, push, deployment or hosted changes were made.
+
 ## Remaining-work implementation (2026-09-25)
 
 This section supersedes earlier pending implementation notes.

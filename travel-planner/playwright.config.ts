@@ -8,8 +8,10 @@ export default defineConfig({
   timeout: 90_000,
   use: { baseURL: "http://127.0.0.1:5174", trace: "retain-on-failure", reducedMotion: "reduce" },
   projects: [
-    { name: "desktop", use: { ...devices["Desktop Chrome"], channel: process.env.CI ? undefined : "chrome" } },
-    { name: "mobile", use: { ...devices["iPhone 13"], defaultBrowserType: "chromium", channel: process.env.CI ? undefined : "chrome" } },
+    // Use Playwright's bundled Chromium locally and in CI to avoid hiding
+    // service-worker regressions behind differences in installed Chrome.
+    { name: "desktop", use: { ...devices["Desktop Chrome"] } },
+    { name: "mobile", use: { ...devices["iPhone 13"], defaultBrowserType: "chromium" } },
   ],
   webServer: [
     { command: "npm run dev -- --port 5174", url: "http://127.0.0.1:5174", reuseExistingServer: !process.env.CI },

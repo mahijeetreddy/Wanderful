@@ -15,6 +15,9 @@ self.addEventListener("fetch", event => {
   if (request.mode === "navigate" && ["/", "/index.html", "/offline"].includes(url.pathname)) {
     event.respondWith(fetch(request).catch(async () => url.pathname === "/offline" ? (await caches.open(CACHE)).match("/index.html") : Response.redirect("/offline", 302)));
   } else if (ASSETS.includes(url.pathname)) {
-    event.respondWith(caches.open(CACHE).then(async cache => (await cache.match(request)) || fetch(request)));
+    // Match the same canonical request used by addAll(). Module/style requests
+    // can carry Origin, unlike precache requests; Vary: Origin would otherwise
+    // cause an offline miss. Only public, build-allowlisted assets reach here.
+    event.respondWith(caches.open(CACHE).then(async cache => (await cache.match(url.pathname)) || fetch(request)));
   }
 });

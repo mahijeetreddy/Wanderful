@@ -33,6 +33,20 @@ test("prepared trip survives a production offline reload; logout clears IndexedD
     });
   });
   await context.setOffline(true);
+  // Check that both scripts and styles remain readable without the network.
+  // The reload below also exercises Chromium's module-loader Origin headers
+  // against the preview server's Vary: Origin responses.
+  const offlineAssets = await page.evaluate(async () => {
+    const assets = Array.from(document.querySelectorAll<HTMLScriptElement | HTMLLinkElement>(
+      'script[src], link[rel="stylesheet"]'
+    )).map(element => element instanceof HTMLScriptElement ? element.src : element.href);
+    return Promise.all(assets.map(async asset => {
+      const response = await fetch(asset, { mode: "cors" });
+      return { ok: response.ok, bytes: (await response.text()).length };
+    }));
+  });
+  expect(offlineAssets.length).toBeGreaterThan(0);
+  expect(offlineAssets.every(asset => asset.ok && asset.bytes > 0)).toBe(true);
   await page.reload();
   await expect(page.getByRole("heading", { name: "Lisbon offline" })).toBeVisible();
   await expect(page.getByText("Visit the museum", { exact: true })).toBeVisible();

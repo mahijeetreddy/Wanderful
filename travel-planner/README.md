@@ -161,8 +161,9 @@ npm run build
 npm run test:browser
 ```
 
-The Playwright configuration uses installed Google Chrome locally and Chromium in CI;
-CI installs it with `npx playwright install --with-deps chromium`. Browser checks start
+The Playwright configuration uses bundled Chromium both locally and in CI. Install it
+locally with `npx playwright install chromium`; CI uses
+`npx playwright install --with-deps chromium`. Browser checks start
 an isolated Vite server on port 5174, use two workers by default, and mock provider/account APIs. They do not make
 bookings or measure live provider performance.
 
