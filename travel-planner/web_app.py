@@ -844,6 +844,10 @@ def create_plan_job_route():
     payload = _json_body()
     travel_inputs = _validate_payload(payload)
     learned_tags = learned_preference_tags(get_user_preferences(user["id"]).get("memory") or {})
+    from travel_workspace import preference_prompt
+    personal = (get_user_preferences(user["id"]).get("memory") or {}).get("travel_preferences")
+    if payload.get("use_travel_preferences", True) and personal:
+        travel_inputs = replace(travel_inputs, interests=f"{travel_inputs.interests}; {preference_prompt(personal)}")
     if learned_tags:
         travel_inputs = replace(
             travel_inputs,
@@ -1158,6 +1162,8 @@ from search_routes import make_search_blueprint
 app.register_blueprint(make_search_blueprint(_validate_payload, limiter))
 from workspace_routes import make_workspace_blueprint
 app.register_blueprint(make_workspace_blueprint())
+from travel_workspace import make_travel_workspace_blueprint
+app.register_blueprint(make_travel_workspace_blueprint())
 
 
 if __name__ == "__main__":

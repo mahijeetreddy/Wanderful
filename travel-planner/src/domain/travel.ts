@@ -1,4 +1,6 @@
 export type PlannerForm = {
+  destination_timezone?: string;
+  use_travel_preferences?: boolean;
   origin: string;
   destination: string;
   start_date: string;

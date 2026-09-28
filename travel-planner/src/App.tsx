@@ -15,6 +15,8 @@ import { BookingSelections } from "./features/trips/BookingSelections";
 import { validateOfflineAccount } from "./features/offline/storage";
 import { DecisionPreview, type Decision } from "./features/trips/DecisionPreview";
 import { TripOverview } from "./features/trips/TripOverview";
+import { ProductWorkspace } from "./features/workspace/ProductWorkspace";
+import { PreferencesButton } from "./features/workspace/PreferencesDialog";
 import { invalidateSession, observeSessionEnd, queryClient } from "./features/auth/session";
 import { AdminPanel } from "./features/admin/AdminPanel";
 import { PasswordResetModal } from "./features/auth/PasswordResetModal";
@@ -1162,6 +1164,7 @@ function App() {
                 />
               </label>
 
+              {authUser?.status === "active" && <div className="mt-4 flex flex-wrap items-center gap-4"><PreferencesButton key={authUser.id} /><label className="flex min-h-11 items-center gap-2 text-sm text-slate-200"><input type="checkbox" checked={form.use_travel_preferences !== false} onChange={e => setForm(current => ({ ...current, use_travel_preferences: e.target.checked }))} />Use my preferences for this plan</label></div>}
               <button
                 type="submit"
                 disabled={loading || !authUser || authUser.status !== "active"}
@@ -1194,6 +1197,7 @@ function App() {
                   <button onClick={resetPlan} className="action-button" type="button"><RotateCcw size={15} /> New Trip</button>
                 </div> : null}
               </div>
+              {authUser && activeSavedTrip && (() => { const trip = savedTrips.find(item => item.id === activeSavedTrip.id); return trip ? <ProductWorkspace key={`${authUser.id}-${trip.id}`} trip={trip} onUpdated={acceptTripUpdate} /> : null; })()}
               <ItineraryResult
                 form={form}
                 itinerary={itinerary}

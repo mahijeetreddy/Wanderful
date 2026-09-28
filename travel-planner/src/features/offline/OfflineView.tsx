@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import type { OfflineTripPack } from "../../domain/travel";
 import { listOfflinePacks } from "./storage";
+import { TodayMode } from "../workspace/TodayMode";
 
 export function OfflineView() {
   const [packs, setPacks] = useState<OfflineTripPack[]>([]);
   const [error, setError] = useState("");
+  const [todayTrip, setTodayTrip] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
     const load = () => { void listOfflinePacks().then(values => { if (active) setPacks(values); }).catch(() => { if (active) setError("This browser could not open offline storage."); }); };
@@ -21,7 +23,8 @@ export function OfflineView() {
     {packs.map(pack => <article key={pack.trip.id} className="mt-8 rounded-3xl border border-[#72d7dc]/25 bg-white/5 p-6">
       <h2 className="text-3xl">{pack.trip.name || pack.trip.destination}</h2>
       <p className="mt-2 text-sm text-white/75">{pack.trip.date_range} · Saved {new Date(pack.generated_at).toLocaleString()}</p>
-      {pack.days.map(day => <section key={day.day_number} className="mt-6">
+      <button className="action-button mt-4" onClick={() => setTodayTrip(todayTrip === pack.trip.id ? null : pack.trip.id)}>{todayTrip === pack.trip.id ? "Show all days" : "Open day mode"}</button>
+      {todayTrip === pack.trip.id ? <div className="mt-5"><TodayMode destination={pack.trip.destination} days={pack.days} offline /></div> : pack.days.map(day => <section key={day.day_number} className="mt-6">
         <h3 className="text-xl text-[#72d7dc]">Day {day.day_number} · {day.title}</h3>
         <ul className="mt-3 space-y-4">{(day.activities || []).map((activity, index) => <li key={index} className="rounded-2xl bg-black/20 p-4">
           <p className="text-sm text-white/75">{activity.time || activity.period || "Flexible"}</p><p className="mt-1 font-medium">{activity.title}</p>

@@ -6,6 +6,17 @@ budget and interests, not generic suggestions.
 
 ## What you can do
 
+- **Explore “What if?” alternatives.** Open a saved trip, then compare up to three
+  date/flight/stay scenarios without changing the original. Search both providers,
+  complete return flights, and compare quote totals, ledger projections and timing impacts.
+- **Set your travel preferences.** A separate dialog saves pace, walking tolerance,
+  departure preference, stay priority and interests. Disable defaults for an individual plan.
+- **Keep a booking inbox.** Paste confirmations, upload plain-text `.txt`/`.eml` files,
+  or enter details manually. Review before saving; confirmation is user-recorded and
+  does not mark a payment or replace selected offers. PDF/image extraction is not included.
+- **Travel in Today mode.** Open a saved trip for a focused day view with directions,
+  estimated daily costs and reviewed bookings. Destination time zones determine “today”;
+  prepared offline packs also offer a read-only day view without booking-inbox data.
 - **Describe your trip and get a full itinerary.** Enter your origin, destination,
   dates, budget, and interests, and Wanderful builds a day-by-day plan with paced
   activities, estimated costs, and a running budget breakdown.
@@ -33,7 +44,7 @@ and the [product tour with screenshots](../README.md#product-tour).
 See [operations and evaluation commands](docs/OPERATIONS.md) for offline preparation,
 the separate disabled-by-default weather worker, capped provider probes, and runtime metrics.
 
-The remaining local hardening includes ledger-backed legacy budget responses, overnight
+Completed local hardening includes ledger-backed legacy budget responses, overnight
 activity timing checks, resolved/stale weather notices, scheduler retry recovery, accessible
 journal/guidebook dialogs and automated accessibility scans. A read-only release preflight
 reports missing schema/configuration without changing hosted services. Live hotel/flight
@@ -50,10 +61,10 @@ Selection previews show price/budget changes and timing conflicts before applyin
 change. Linked booking payments are not counted twice; group balances use exact minor
 units and individual revision-checked records. The vault supports a local persistent
 volume and non-destructive copy verification; see [vault operations](docs/VAULT_STORAGE.md).
-Remaining work includes complete map/accessibility audits, undo UI, account-scoped
-IndexedDB offline packs, monitoring, and evaluation benchmarks. Existing offline and
-disruption tools are not completion of those upgrades. Groups are owner-managed;
-disruptions remain user-triggered.
+Remaining release work includes broader device/accessibility audits, environment readiness,
+backup recovery and end-to-end live performance benchmarks. Groups are owner-managed;
+non-weather disruptions remain user-triggered. New product tools and their boundaries are
+documented in [Product workspace](docs/PRODUCT_WORKSPACE.md).
 
 Wanderful is in a controlled beta. New accounts require admin approval before
 planning is enabled. Prices and availability shown are time-sensitive results from
@@ -167,9 +178,9 @@ locally with `npx playwright install chromium`; CI uses
 an isolated Vite server on port 5174, use two workers by default, and mock provider/account APIs. They do not make
 bookings or measure live provider performance.
 
-Latest local results: **92 backend tests passed** (September 23, 2026), **20 frontend
-checks passed** (14 browser journeys and 6 pure logic checks across two viewport projects),
-and TypeScript/production build passed on September 23. Coverage includes quote retention across refresh,
+Latest local results: **121 backend tests passed**, **44 frontend checks passed** with
+CI's bundled Chromium, and TypeScript/production build passed (September 28, 2026).
+These are local results, not hosted GitHub Actions verification. Coverage includes quote retention across refresh,
 reload and save/reopen; flight comparison; empty/failed stays; and delayed cross-tab logout.
 Stay-map coverage also checks invalid coordinates, keyboard selection, failed photos,
 provider recovery and dialog focus wrapping/restoration.

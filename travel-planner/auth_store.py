@@ -443,7 +443,10 @@ def upsert_user_preferences(user_id: int, preferences: dict[str, Any]) -> dict[s
         value.date_of_birth = _normalize_dob(preferences.get("date_of_birth"))
         value.age = _normalize_age(preferences.get("age"))
         if isinstance(preferences.get("memory"), dict):
-            value.memory_json = preferences["memory"]
+            # Dedicated preferences use their own revision-checked endpoint.
+            # An older profile dialog must not overwrite newer travel defaults.
+            protected = {key: item for key, item in (value.memory_json or {}).items() if key.startswith("travel_preferences")}
+            value.memory_json = {**{key: item for key, item in preferences["memory"].items() if not key.startswith("travel_preferences")}, **protected}
     return get_user_preferences(user_id)
 
 

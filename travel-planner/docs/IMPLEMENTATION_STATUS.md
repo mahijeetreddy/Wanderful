@@ -14,6 +14,32 @@ No commits, deployments, hosted migrations, or service purchases.
 Each phase must pass its checks before the next is considered complete. Live provider
 latency and hosted infrastructure are not verified by fixture tests.
 
+## Product workspace increment (2026-09-28)
+
+- Added separate What if?, Booking inbox and Today dialogs to the opened saved-trip
+  workspace, plus a standalone personal travel preferences dialog in the planner.
+- What-if scenarios retain the original trip, compare up to three historical alternatives,
+  search dates independently, complete outbound/return quotes, and show exact quote deltas,
+  ledger-backed budget projections and arrival/departure conflicts. Applying a scenario or
+  automatically moving activities is not part of this increment.
+- Preferences are account-scoped, revision-checked soft planning defaults with a per-plan
+  opt-out. Fixed portal form submission so preference saves cannot start a planning job.
+- Inbox imports are reviewed drafts from pasted text or `.txt`/`.eml`; no external LLM,
+  email access, PDF/OCR, raw-file storage, automatic payment or booking-selection changes.
+- Today offers destination-time-zone-aware day previews, next scheduled activity,
+  directions and confirmed-by-user inbox entries. Prepared offline packs expose the same
+  day view without private inbox data or network directions.
+- Reused existing revision-08 tables: no new schema or hosted migrations. The persistence
+  approach follows the database guidance while preserving SQLAlchemy and existing accounts.
+- Validation: production build passed; final backend suite **121 passed (115.65s)**.
+  Full bundled-Chromium suite with `CI=true`: **44 passed (3.4m)**, including desktop/mobile
+  feature journeys, axe checks, provider failure/return completion, offline reload and logout.
+  Screenshots are in ignored `test-results/`. Hosted Linux CI and live provider calls were
+  not run for this increment. No commits, pushes, deployments or hosted changes occurred.
+- Details, boundaries and the explicitly requested next-feature reminder are in
+  [Product workspace](PRODUCT_WORKSPACE.md). **Next: realistic day planner grounded in
+  retrieved sources via RAG**, with provenance, freshness and schedule feasibility checks.
+
 ## Offline CI regression fix (2026-09-27)
 
 - Reproduced both desktop/mobile offline reload failures locally with CI's bundled
