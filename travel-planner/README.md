@@ -1,5 +1,18 @@
 # Wanderful
 
+Planning performance: the default planner now uses bounded direct structured generation,
+with targeted day repair instead of an automatic agent fallback cascade.
+Validated days appear in a read-only preview while the itinerary finishes; day
+regeneration and guidebooks also use bounded direct requests.
+See [measurement, configuration and limitations](docs/PLANNING_PERFORMANCE.md).
+Attraction research now runs independently. Review dated place matches and explicitly
+apply map references; hours, prices and travel times stay unverified. See
+[research behavior and production-worker configuration](docs/ATTRACTION_RELIABILITY.md).
+
+Theme-aware travel loading scenes and public-provider cache improvements are described
+in the [loading and latency review](docs/LOADING_AND_LATENCY_REVIEW.md), including
+remaining architectural opportunities and measurement limitations.
+
 Wanderful turns a short description of your trip into a complete, day-by-day travel
 plan — built from real flight and hotel availability, live weather, and your stated
 budget and interests, not generic suggestions.

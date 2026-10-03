@@ -92,14 +92,16 @@ def _runtime_report():
         missing = sorted({"plan_jobs", "offer_snapshots"} - set(inspect(db.bind).get_table_names()))
         if missing:
             return {"mode": "runtime-aggregate", "passed": False, "status": "migration_required", "missing_tables": missing, "limitation": "Apply reviewed migrations separately. No schema changes were attempted."}
-        jobs = db.scalars(select(PlanJob).order_by(PlanJob.created_at.desc()).limit(200)).all()
+        jobs = db.execute(select(PlanJob.status, PlanJob.metrics_json).order_by(PlanJob.created_at.desc()).limit(2000)).all()
         snapshots = db.scalars(select(OfferSnapshot).order_by(OfferSnapshot.created_at.desc()).limit(1000)).all()
-        full = [row.metrics_json["full_plan_ms"] for row in jobs if isinstance(row.metrics_json.get("full_plan_ms"), (int, float))]
+        full = [row.metrics_json["full_plan_ms"] for row in jobs if row.status == "complete" and isinstance(row.metrics_json.get("full_plan_ms"), (int, float))]
         first = [row.metrics_json.get("collection", {}).get("first_useful_ms") for row in jobs]
         provider = [ms for row in jobs for ms in row.metrics_json.get("collection", {}).get("provider_ms", {}).values() if isinstance(ms, (int, float))]
         fallback = [row.metrics_json["planning"]["fallback_used"] for row in jobs if "fallback_used" in row.metrics_json.get("planning", {})]
         completeness = [offer_completeness(row.kind, row.offer)["status"] == "complete" for row in snapshots]
         failed = sum(row.status == "failed" for row in jobs)
+        from planning_telemetry import summarize
+        journey_report = summarize([{"status": row.status, "metrics": row.metrics_json or {}} for row in jobs])
     counters = metrics_snapshot()
     cached = []
     client = redis_client()
@@ -107,7 +109,7 @@ def _runtime_report():
         if client: cached = [float(value) for value in client.lrange("wanderful:timings:cached_provider_ms", 0, 999)]
     except Exception: pass
     hits, misses = counters.get("cache_hits", 0), counters.get("cache_misses", 0)
-    return {"mode": "runtime-aggregate", "passed": True, "sample_count": len(jobs), "failed_jobs": failed, "provider_p95_ms": percentile(provider), "first_useful_p95_ms": percentile([value for value in first if isinstance(value, (int, float))]), "full_plan_p95_ms": percentile(full), "cached_provider_p95_ms": percentile(cached), "cache_hit_rate": hits / (hits + misses) if hits + misses else None, "fallback_rate": sum(fallback) / len(fallback) if fallback else None, "offer_completeness_rate": sum(completeness) / len(completeness) if completeness else None, "handoff_clicks": {kind: counters.get("handoff_" + kind) for kind in ("flights", "hotels")}, "missing_full_plan_samples": len(jobs) - len(full), "limitation": "Null means missing telemetry, not zero latency or guaranteed success. Up to 200 recent jobs; Redis samples retained for seven days."}
+    return {"mode": "runtime-aggregate", "journey_report": journey_report, "passed": True, "sample_count": len(jobs), "failed_jobs": failed, "provider_p95_ms": percentile(provider), "first_useful_p95_ms": percentile([value for value in first if isinstance(value, (int, float))]), "full_plan_p95_ms": percentile(full) if len(full) >= 200 else None, "cached_provider_p95_ms": percentile(cached), "cache_hit_rate": hits / (hits + misses) if hits + misses else None, "fallback_rate": sum(fallback) / len(fallback) if fallback else None, "offer_completeness_rate": sum(completeness) / len(completeness) if completeness else None, "handoff_clicks": {kind: counters.get("handoff_" + kind) for kind in ("flights", "hotels")}, "missing_full_plan_samples": len(jobs) - len(full), "limitation": "Null means missing telemetry, not zero latency or guaranteed success. Full-plan p95 requires 200 successful samples. Up to 2000 recent jobs; Redis samples retained for seven days."}
 
 
 def main():

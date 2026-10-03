@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { TravelLoading } from "../loading/TravelLoading";
 import { Compass, Loader2, RefreshCw } from "lucide-react";
 import { apiFetch, readApiJson } from "../../api/client";
 import { Modal } from "../search/Modal";
@@ -115,9 +116,7 @@ export function GuidebookPanel({
 
         {error ? <p className="mt-4 rounded-2xl border border-red-200/16 bg-red-300/10 p-3 text-sm text-red-50">{error}</p> : null}
         {loading ? (
-          <div className="mt-8 flex items-center justify-center gap-2 text-white/58">
-            <Loader2 className="animate-spin" size={18} /> Loading
-          </div>
+          <TravelLoading theme="documents" label="Opening your guidebook" />
         ) : null}
 
         {!loading && !guidebook ? (
@@ -136,10 +135,8 @@ export function GuidebookPanel({
           </div>
         ) : null}
 
-        {guidebook && isBusy ? (
-          <div className="mt-8 flex items-center justify-center gap-2 text-white/58">
-            <Loader2 className="animate-spin" size={18} /> Writing your guidebook...
-          </div>
+        {generating || (guidebook && isBusy) ? (
+          <TravelLoading theme="documents" label="Writing your guidebook" />
         ) : null}
 
         {guidebook && guidebook.status === "failed" && !generating ? (

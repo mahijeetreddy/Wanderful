@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { TravelLoading } from "../loading/TravelLoading";
 import { Check, Loader2, ShieldCheck, X } from "lucide-react";
 import { apiFetch, readApiJson } from "../../api/client";
 
@@ -45,7 +46,7 @@ export function AdminPanel({ open, onClose }: { open: boolean; onClose: () => vo
           <button type="button" onClick={onClose} className="rounded-full border border-white/12 px-3 py-2 text-sm text-white/68">Close</button>
         </div>
         {error ? <p className="mt-4 rounded-2xl border border-red-200/16 bg-red-300/10 p-3 text-sm text-red-50">{error}</p> : null}
-        {loading ? <div className="mt-8 flex items-center justify-center gap-2 text-white/58"><Loader2 className="animate-spin" size={18} /> Loading</div> : null}
+{loading ? <TravelLoading theme="account" label="Loading accounts" /> : null}
         {!loading && !users.length ? <p className="mt-8 rounded-2xl border border-white/10 bg-white/[0.05] p-5 text-sm text-white/58">No accounts are awaiting approval.</p> : null}
         <div className="mt-5 space-y-3">
           {users.map((user) => (

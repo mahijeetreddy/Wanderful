@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { TravelLoading } from "../loading/TravelLoading";
 import { AlertTriangle, CalendarDays, Loader2, MapPin, Sparkles, Wallet } from "lucide-react";
 import { apiFetch, readApiJson } from "../../api/client";
 
@@ -71,9 +72,7 @@ export function SharedTripView({ token }: { token: string }) {
     <div className="min-h-screen bg-[#0e1518] px-4 py-10 sm:px-8">
       <div className="mx-auto max-w-3xl">
         {loading ? (
-          <div className="flex items-center justify-center gap-2 py-24 text-white/58">
-            <Loader2 className="animate-spin" size={20} /> Loading trip...
-          </div>
+          <TravelLoading theme="itinerary" label="Opening this adventure" />
         ) : null}
 
         {!loading && (error || !trip) ? (

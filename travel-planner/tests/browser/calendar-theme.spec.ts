@@ -1,0 +1,36 @@
+import { expect, test } from "@playwright/test";
+import { accessible } from "./accessibility";
+
+test("calendar range is keyboard accessible; light theme persists", async ({ page }, testInfo) => {
+  page.on("pageerror", error => console.error(error.message));
+  await page.route(url => url.pathname.startsWith("/api/"), route => route.fulfill({ json: { user: null } }));
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: "Switch to light mode" })).toBeVisible({ timeout: 15000 });
+  await page.getByRole("button", { name: "Switch to light mode" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await expect(page.locator(".hero-intelligence-card")).toHaveCSS("background-color", "rgb(255, 253, 250)");
+  await accessible(page, ".hero-section");
+  await page.screenshot({ path: testInfo.outputPath("light-home.png") });
+  await page.getByRole("button", { name: "Choose dates", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Choose travel dates" });
+  await expect(dialog).toBeVisible();
+  await page.getByRole("button", { name: "Next month", exact: true }).click();
+  const start = new Date(); start.setDate(1); start.setMonth(start.getMonth() + 1);
+  const name = start.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+  const first = dialog.getByRole("button", { name, exact: true });
+  await first.click();
+  await first.press("ArrowRight");
+  const next = new Date(start); next.setDate(2);
+  await expect(dialog.getByRole("button", { name: next.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" }), exact: true })).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(dialog.getByText("1 night · 2 days")).toBeVisible();
+  await accessible(page, "dialog");
+  await page.screenshot({ path: testInfo.outputPath("light-calendar.png") });
+  await dialog.getByRole("button", { name: "Apply dates" }).click();
+  const value = await page.getByLabel("Start date", { exact: true }).inputValue();
+  expect(value).toMatch(/^\d{4}-\d{2}-01$/);
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await page.getByRole("button", { name: "Switch to dark mode" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+});

@@ -1,6 +1,9 @@
 import json
+from unittest.mock import patch
 
 from data_collector import _run_provider_tasks_with_metrics, normalize_weather
+from data_collector import _cached_provider_call
+from tools import interactive_provider_budget
 
 
 def test_provider_collection_reports_bounded_parallel_timing():
@@ -64,3 +67,23 @@ def test_normalize_weather_extracts_daily_summaries():
 def test_normalize_weather_returns_none_for_unavailable_text():
     assert normalize_weather("Weather forecast unavailable: set OPENWEATHER_API_KEY in your environment or .env file.") is None
     assert normalize_weather(json.dumps({"destination": "Nowhere", "notice": "No forecast entries overlap the requested travel dates."})) is None
+
+
+def test_interactive_collection_does_not_retry_slow_providers():
+    with patch("data_collector.get_cached_response", return_value=None), patch("data_collector.set_cached_response"), patch("data_collector.provider_call", return_value="{}") as call:
+        with interactive_provider_budget(15):
+            _cached_provider_call("flights", 100, {}, lambda: "{}")
+    assert call.call_args.kwargs["retries"] == 0
+
+
+def test_first_useful_metric_recognizes_normalized_offers():
+    results, metrics = _run_provider_tasks_with_metrics({"flights": lambda: json.dumps({"offers": [{"total_price": 500}]})})
+    assert metrics["first_useful_ms"] is not None
+
+
+def test_collection_failures_do_not_publish_credentials():
+    def fail():
+        raise TimeoutError("secret-key-in-url")
+    results, _ = _run_provider_tasks_with_metrics({"flights": fail})
+    assert "secret" not in results["flights"]
+    assert "timed out" in results["flights"]

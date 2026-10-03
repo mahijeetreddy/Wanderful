@@ -567,11 +567,19 @@ def route_map_post():
             stops.append({"index": index, "title": title or location, "location": location or title})
     if not destination or not stops:
         return jsonify({"error": "Destination and at least one stop are required."}), 400
+    failures = []
+    def resolve_stop(stop):
+        from places import lookup_place, PlaceLookupError
+        try:
+            return lookup_place(stop, destination)
+        except PlaceLookupError:
+            failures.append(stop["index"])
+            return None
     with ThreadPoolExecutor(max_workers=min(4, len(stops))) as executor:
-        from places import lookup_place
-        coordinates = list(executor.map(lambda stop: lookup_place(stop, destination), stops))
+        coordinates = list(executor.map(resolve_stop, stops))
     resolved = [{**stop, **point} for stop, point in zip(stops, coordinates) if point]
-    return jsonify({"stops": resolved, "unresolved": len(stops) - len(resolved)})
+    status = "unavailable" if not os.getenv("SERPAPI_API_KEY") else "provider_error" if failures else "complete" if len(resolved) == len(stops) else "partial" if resolved else "no_match"
+    return jsonify({"stops": resolved, "unresolved": len(stops) - len(resolved), "status": status})
 
 
 @app.get("/api/trips/<int:trip_id>/offline-pack")
@@ -880,6 +888,20 @@ def get_plan_job_route(job_id: str):
     if not job:
         return jsonify({"error": "Plan job not found."}), 404
     return jsonify({"job": job})
+
+
+@app.get("/api/plan-jobs/<job_id>/research")
+@require_active_user
+def plan_research_route(job_id: str):
+    user = current_user(require_active=True)
+    job = get_plan_job(job_id, user["id"])
+    if not job:
+        return jsonify({"error": "Plan job not found."}), 404
+    from attraction_research import lookup_research, evidence_review
+    form = job.get("form") or {}
+    research = lookup_research(form.get("destination", ""), form.get("interests", ""))
+    days = (job.get("structured_itinerary") or {}).get("days", [])
+    return jsonify({"research": research, "checks": evidence_review(days, research, form.get("destination", ""))})
 
 
 @app.post("/api/plan-jobs/<job_id>/cancel")

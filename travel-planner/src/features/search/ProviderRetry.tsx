@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch, readApiJson } from "../../api/client";
 import { sessionEpoch } from "../auth/session";
+import { TravelLoading } from "../loading/TravelLoading";
 import type { PlannerForm, ProviderStatus, SearchSession } from "../../domain/travel";
 
 export function ProviderRetry({ form, kind, status, onResults }: {
@@ -43,6 +44,7 @@ export function ProviderRetry({ form, kind, status, onResults }: {
     unavailable: "This search is currently unavailable.", queued: "Waiting for options…", searching: "Searching…",
   };
   return <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#72d7dc]/20 bg-[#72d7dc]/5 p-3">
+    {(busy || state === "queued" || state === "searching") && <TravelLoading theme={kind === "hotels" ? "stays" : "flights"} compact />}
     <p role="status" className="text-sm text-white/75">{error || query.error?.message || (busy ? "Searching…" : state && labels[state]) || "Options can change before booking."}</p>
     <button type="button" onClick={retry} disabled={busy} className="min-h-11 rounded-full border border-[#72d7dc]/30 px-4 text-sm text-[#a9f1f1] disabled:opacity-50">{busy ? "Searching…" : `Refresh ${kind === "hotels" ? "stays" : "flights"}`}</button>
   </div>;

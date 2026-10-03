@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime, timezone
 from time import perf_counter
 from typing import Any
 
 from auth_store import get_user
 from data_collector import collect_trip_data, normalize_flight_options, normalize_hotel_options, normalize_weather
+from direct_planner import PlanningFailure
 from offers import classify_result
 from email_service import send_plan_ready
 from guidebook_store import update_guidebook
@@ -26,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 def execute_plan_job(job_id: str, travel_input_values: dict[str, Any]) -> None:
     started = perf_counter()
+    journey = {"trip_days": (datetime.fromisoformat(travel_input_values["end_date"]) - datetime.fromisoformat(travel_input_values["start_date"])).days + 1}
     travel_inputs = TravelInputs(**travel_input_values)
     try:
         if cancellation_requested(job_id):
@@ -37,8 +40,14 @@ def execute_plan_job(job_id: str, travel_input_values: dict[str, Any]) -> None:
             progress="Collecting live provider data in parallel.",
         )
         partial_options: dict[str, Any] = {"flights": [], "hotels": [], "provider_status": {}}
+        job_record = get_plan_job(job_id)
+        if job_record and job_record.get("created_at"):
+            created = datetime.fromisoformat(job_record["created_at"])
+            journey["queue_wait_ms"] = max(0, round((datetime.now(timezone.utc) - created.replace(tzinfo=created.tzinfo or timezone.utc)).total_seconds() * 1000))
 
         def publish_provider(name: str, raw: str) -> None:
+            if cancellation_requested(job_id):
+                return
             partial_options["provider_status"][name] = classify_result(raw)["status"]
             if name == "flights":
                 partial_options["flights"] = normalize_flight_options(raw)
@@ -46,6 +55,8 @@ def execute_plan_job(job_id: str, travel_input_values: dict[str, Any]) -> None:
                 partial_options["hotels"] = normalize_hotel_options(raw)
             elif name == "weather":
                 partial_options["weather"] = normalize_weather(raw)
+            if name in {"flights", "hotels"} and partial_options[name]:
+                journey.setdefault("first_options_ms", round((perf_counter() - started) * 1000))
             if name in {"flights", "hotels"}:
                 from search_service import record_options
                 job_record = get_plan_job(job_id)
@@ -72,8 +83,21 @@ def execute_plan_job(job_id: str, travel_input_values: dict[str, Any]) -> None:
             update_plan_job(job_id, status="cancelled", progress="Planning cancelled.")
             return
 
-        structured, metrics = generate_structured_plan(travel_inputs, trip_data)
+        def publish_days(days: list[dict[str, Any]]) -> None:
+            if cancellation_requested(job_id):
+                raise PlanningFailure("cancelled", {})
+            journey.setdefault("first_draft_ms", round((perf_counter() - started) * 1000))
+            update_plan_job(job_id, progress=f"Drafting your trip: {len(days)} days ready to preview.", metrics={"draft_days": days, "journey": journey})
+
+        structured, metrics = generate_structured_plan(travel_inputs, trip_data, on_days=publish_days)
+        if cancellation_requested(job_id):
+            update_plan_job(job_id, status="cancelled", progress="Planning cancelled.")
+            return
         metrics = {"collection": trip_data.get("collection_metrics", {}), "planning": metrics, "full_plan_ms": round((perf_counter() - started) * 1000)}
+        journey["ready_ms"] = metrics["full_plan_ms"]
+        if "queue_wait_ms" in journey:
+            journey["enqueue_to_ready_ms"] = journey["queue_wait_ms"] + journey["ready_ms"]
+        metrics["journey"] = journey
         itinerary = render_itinerary_markdown(structured)
         update_plan_job(
             job_id,
@@ -92,11 +116,18 @@ def execute_plan_job(job_id: str, travel_input_values: dict[str, Any]) -> None:
         except Exception:
             logger.exception("Failed to send plan-ready email", extra={"job_id": job_id})
     except Exception as exc:
+        if cancellation_requested(job_id):
+            update_plan_job(job_id, status="cancelled", progress="Planning cancelled.")
+            return
+        failure_metrics = {"metrics": {"journey": journey, "full_plan_ms": round((perf_counter() - started) * 1000)}}
+        if isinstance(exc, PlanningFailure):
+            failure_metrics["metrics"].update(planning=exc.metrics, collection=trip_data.get("collection_metrics", {}))
         update_plan_job(
             job_id,
             status="failed",
             progress="Planner failed.",
             error=_safe_job_error(exc),
+            **failure_metrics,
         )
 
 
@@ -142,6 +173,8 @@ def generate_guidebook_job(
 
 
 def _safe_job_error(exc: Exception) -> str:
+    if isinstance(exc, PlanningFailure):
+        return str(exc)
     message = str(exc)
     lowered = message.lower()
     if "429" in lowered or "quota" in lowered or "resource_exhausted" in lowered:

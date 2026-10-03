@@ -1,4 +1,5 @@
 crewai[google-genai]==1.14.7
+google-genai==1.65.0
 litellm==1.83.0
 Flask>=3.0.0
 python-dotenv>=1.0.0

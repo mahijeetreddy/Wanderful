@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { TravelLoading } from "../loading/TravelLoading";
 import { ExternalLink, Footprints, Loader2, MapPinned, Navigation, Route } from "lucide-react";
 import L from "leaflet";
 import { MapContainer, Marker, Polyline, Popup, TileLayer, useMap } from "react-leaflet";
@@ -17,6 +18,8 @@ export function RouteMapPanel({ destination, days, mapCenter, onResolved }: { de
   const [unresolved, setUnresolved] = useState(0);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const [retry, setRetry] = useState(0);
+  const [activeStop, setActiveStop] = useState<number | null>(null);
   const cache = useRef(new Map<string, { stops: RouteStop[]; unresolved: number }>());
   const resolvedCallback = useRef(onResolved);
   resolvedCallback.current = onResolved;
@@ -26,11 +29,13 @@ export function RouteMapPanel({ destination, days, mapCenter, onResolved }: { de
   useEffect(() => {
     if (!day || !activities.length) {
       setStops([]);
+      setLoading(false); setUnresolved(0); setMessage("");
       return;
     }
     const cacheKey = JSON.stringify([destination, activities]);
     const cached = cache.current.get(cacheKey);
     if (cached) {
+      setLoading(false); setMessage("");
       setStops(cached.stops);
       setUnresolved(cached.unresolved);
       return;
@@ -44,6 +49,7 @@ export function RouteMapPanel({ destination, days, mapCenter, onResolved }: { de
       source_url: activity.source_url,
     }] : []);
     if (embedded.length === activities.length) {
+      setLoading(false); setMessage("");
       cache.current.set(cacheKey, { stops: embedded, unresolved: 0 });
       setStops(embedded);
       setUnresolved(0);
@@ -51,30 +57,35 @@ export function RouteMapPanel({ destination, days, mapCenter, onResolved }: { de
     }
     const controller = new AbortController();
     setLoading(true);
-    setStops([]);
+    setStops(embedded);
+    setUnresolved(activities.length - embedded.length);
+    setActiveStop(null);
     setMessage("");
+    const missing = activities.map((activity, index) => ({ activity, index })).filter(({ index }) => !embedded.some(stop => stop.index === index));
     void apiFetch("/api/route-map", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ destination, stops: activities.map((activity) => ({ title: activity.title, location: activity.location || activity.title })) }),
+      body: JSON.stringify({ destination, stops: missing.map(({ activity }) => ({ title: activity.title, location: activity.location || activity.title })) }),
       signal: controller.signal,
     })
-      .then((response) => readApiJson<{ stops: RouteStop[]; unresolved: number }>(response))
+      .then((response) => readApiJson<{ stops: RouteStop[]; unresolved: number; status?: string }>(response))
       .then((payload) => {
-        const valid = (payload.stops || []).filter(stop => validPoint(stop.coordinates) && stop.source_id && stop.source_url);
+        if (controller.signal.aborted) return;
+        const received = (payload.stops || []).filter(stop => missing[stop.index] && validPoint(stop.coordinates) && stop.source_id && stop.source_url).map(stop => ({ ...stop, index: missing[stop.index].index }));
+        const valid = [...embedded, ...received].sort((a, b) => a.index - b.index);
         const result = { stops: valid, unresolved: activities.length - valid.length };
-        cache.current.set(cacheKey, result);
+        if (!result.unresolved) cache.current.set(cacheKey, result);
         setStops(result.stops);
         setUnresolved(result.unresolved);
         if (valid.some(stop => activities[stop.index]?.source_id !== stop.source_id || JSON.stringify(activities[stop.index]?.coordinates) !== JSON.stringify(stop.coordinates))) resolvedCallback.current?.(day.day_number, valid);
-        if (!result.stops.length) setMessage("Map coordinates are unavailable. Open the route in Maps instead.");
+        if (result.unresolved) setMessage(payload.status === "unavailable" ? "Place lookup is not configured. Your stops are still listed below." : payload.status === "provider_error" ? "Place search is temporarily unavailable. Try again." : "Some places couldn't be verified. Search them in Maps or retry.");
       })
       .catch((error) => {
         if (!controller.signal.aborted) setMessage(error instanceof Error ? error.message : "Could not map this day.");
       })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [activities, day, destination]);
+  }, [activities, day, destination, retry]);
 
   if (!days.length) return null;
   const positions = stops.map((stop) => [stop.coordinates.lat, stop.coordinates.lng] as [number, number]);
@@ -108,23 +119,24 @@ export function RouteMapPanel({ destination, days, mapCenter, onResolved }: { de
             <span className="rounded-full bg-white/[.05] px-3 py-1 text-xs text-white/50">{activities.length} stops</span>
           </div>
           <div className="mt-5 space-y-1">
-            {activities.map((activity, index) => <RouteStopRow key={`${activity.title}-${index}`} activity={activity} index={index} last={index === activities.length - 1} />)}
+            {activities.map((activity, index) => <div key={`${activity.title}-${index}`} className={activeStop === index ? "rounded-xl bg-white/[.05] px-2" : "px-2"}><RouteStopRow activity={activity} destination={destination} index={index} last={index === activities.length - 1} />{stops.some(stop => stop.index === index) && <button type="button" className="mb-3 min-h-11 text-sm text-[#a9f1f1]" onClick={() => setActiveStop(index)}>Show {activity.title} on map</button>}</div>)}
           </div>
+          {!loading && unresolved > 0 && <div className="mt-3 rounded-2xl border border-white/10 p-3"><p role="status" className="text-sm text-white/75">{message}</p><button type="button" className="action-button mt-2 min-h-11" onClick={() => setRetry(value => value + 1)}>Retry places</button></div>}
           {day?.transit_note ? <div className="mt-5 flex gap-3 rounded-2xl border border-[#72d7dc]/10 bg-[#72d7dc]/[.055] p-4"><Navigation size={16} className="mt-0.5 shrink-0 text-[#72d7dc]"/><p className="text-sm leading-5 text-white/62">{day.transit_note}</p></div> : null}
         </div>
 
         <div className="relative min-h-[420px] bg-[#081012]">
-          {loading ? <div className="absolute inset-0 z-[500] grid place-items-center bg-[#081012]/70 backdrop-blur-sm"><div className="flex items-center gap-2 rounded-full bg-[#0e1e20] px-4 py-2 text-sm text-white/72"><Loader2 size={15} className="animate-spin"/>Mapping stops</div></div> : null}
+{loading ? <div className="pointer-events-none absolute inset-0 z-[500] grid place-items-center"><TravelLoading theme="map" label="Mapping stops" compact /></div> : null}
           {stops.length ? (
             <MapContainer center={center} zoom={13} scrollWheelZoom className="h-full min-h-[420px] w-full">
-              <TileLayer attribution='&copy; OpenStreetMap contributors' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+              <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' url="https://tile.openstreetmap.org/{z}/{x}/{y}.png" />
               <Polyline positions={positions} pathOptions={{ color: "#72d7dc", weight: 4, opacity: 0.82, dashArray: "8 8" }} />
               {stops.map((stop, index) => (
                 <Marker key={`${stop.title}-${index}`} position={[stop.coordinates.lat, stop.coordinates.lng]} icon={numberedMarker(stop.index + 1)}>
                   <Popup><strong>{stop.title}</strong><br />{stop.location}</Popup>
                 </Marker>
               ))}
-              <FitRoute positions={positions} />
+              <FitRoute positions={positions} active={stops.find(stop => stop.index === activeStop)?.coordinates} />
             </MapContainer>
           ) : <div className="grid h-full min-h-[420px] place-items-center p-8 text-center"><div><MapPinned size={34} className="mx-auto text-[#72d7dc]/45"/><p className="mt-3 text-white/72">{message || "Preparing the route map."}</p><a href={mapsUrl} target="_blank" rel="noreferrer" className="mt-4 inline-flex items-center gap-2 rounded-full bg-[#72d7dc] px-4 py-2 text-sm font-medium text-[#06181a]">Open in Maps <ExternalLink size={13}/></a></div></div>}
           {unresolved ? <div className="absolute bottom-4 right-4 z-[500] rounded-full bg-[#071012]/88 px-3 py-1.5 text-xs text-white/62 backdrop-blur">{unresolved} stop{unresolved === 1 ? "" : "s"} shown in the list only</div> : null}
@@ -134,16 +146,19 @@ export function RouteMapPanel({ destination, days, mapCenter, onResolved }: { de
   );
 }
 
-function RouteStopRow({ activity, index, last }: { activity: StructuredActivityData; index: number; last: boolean }) {
+function RouteStopRow({ activity, destination, index, last }: { activity: StructuredActivityData; destination: string; index: number; last: boolean }) {
+  activity = { ...activity, location: `${activity.location || activity.title}, ${destination}` };
   return <div className="grid grid-cols-[34px_1fr] gap-3"><div className="flex flex-col items-center"><span className="grid h-8 w-8 place-items-center rounded-full border border-[#72d7dc]/28 bg-[#72d7dc]/12 text-xs font-semibold text-[#8de8eb]">{index + 1}</span>{!last ? <span className="my-1 h-full min-h-5 w-px bg-gradient-to-b from-[#72d7dc]/35 to-white/5"/> : null}</div><div className="pb-4"><div className="flex items-center gap-2 text-xs text-white/38"><span>{activity.time || activity.period || "Flexible"}</span>{index ? <><Footprints size={11}/><span>next stop</span></> : null}</div><p className="mt-1 font-medium text-white/88">{activity.title}</p>{activity.schedule_conflict && <p className="mt-2 text-sm text-amber-100">{activity.schedule_conflict}</p>}<a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(activity.location || activity.title)}`} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center text-sm text-[#a9f1f1]">Find in Maps</a><p className="mt-1 text-sm text-white/45">{activity.location || "Location pending"}</p></div></div>;
 }
 
-function FitRoute({ positions }: { positions: [number, number][] }) {
+function FitRoute({ positions, active }: { positions: [number, number][]; active?: Coordinates }) {
   const map = useMap();
+  const signature = JSON.stringify(positions);
   useEffect(() => {
+    if (active) { map.setView([active.lat, active.lng], 16); return; }
     if (positions.length > 1) map.fitBounds(positions, { padding: [42, 42], maxZoom: 15 });
     else if (positions[0]) map.setView(positions[0], 14);
-  }, [map, positions]);
+  }, [map, signature, active?.lat, active?.lng]);
   return null;
 }
 

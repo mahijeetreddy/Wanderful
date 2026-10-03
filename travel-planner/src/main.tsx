@@ -6,6 +6,10 @@ import App from "./App";
 import { SharedTripView } from "./features/share/SharedTripView";
 import { OfflineView } from "./features/offline/OfflineView";
 import "./index.css";
+import "./light-theme.css";
+import { initializeTheme } from "./features/theme/ThemeToggle";
+
+initializeTheme();
 
 const shareMatch = window.location.pathname.match(/^\/share\/([^/]+)$/);
 

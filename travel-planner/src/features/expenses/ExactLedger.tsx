@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { apiFetch, readApiJson } from "../../api/client";
 import type { SavedTrip } from "../../domain/travel";
 import { BudgetReserve } from "./BudgetReserve";
+import { TravelLoading } from "../loading/TravelLoading";
 
 type RecordItem = { id: string; kind: string; name?: string; label?: string; category?: string; amount_minor?: number; paid_by_id?: string; split_ids?: string[]; from_id?: string; to_id?: string; commitment_id?: string };
 type Ledger = { currency: string; exponent: number; revision: number; reserve_percent?: string; reserve_minor?: number; spendable_remaining_minor?: number; planned_minor: number; confirmed_minor: number; paid_minor: number; remaining_expected_minor: number; budget_remaining_minor: number; records: RecordItem[]; commitments: RecordItem[]; balances: Record<string, number>; warnings: string[] };
@@ -46,6 +47,7 @@ export function ExactLedger({ trip, onUpdated }: { trip: SavedTrip; onUpdated: (
   }
   const memberName = (id: string) => members.find(member => member.id === id)?.name || "Member";
   return <section aria-label="Trip money ledger" className="mt-6 space-y-5 text-white">
+    {((!ledger && !error) || busy) && <TravelLoading theme="budget" label={busy ? "Updating your trip money" : "Opening your trip money"} compact={Boolean(ledger)} />}
     <header className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-2xl">Every cost, counted once.</h3><p className="mt-1 text-sm text-white/75">One trip currency. Payments can link to a confirmed booking.</p></div><button onClick={() => void refresh()} disabled={busy} className="min-h-11 rounded-full border border-white/25 px-4">Refresh ledger</button></header>
     {error && <p role="alert" className="rounded-2xl border border-amber-200/30 p-4 text-amber-100">{error} Your draft is retained.</p>}
     {ledger && <><div className="grid grid-cols-2 gap-3 lg:grid-cols-5">{[["Planned", ledger.planned_minor], ["Confirmed", ledger.confirmed_minor], ["Paid", ledger.paid_minor], ["Still expected", ledger.remaining_expected_minor], ["Budget remaining", ledger.budget_remaining_minor]].map(([label, amount]) => <div key={String(label)} className="rounded-2xl border border-[#72d7dc]/20 bg-[#72d7dc]/5 p-4"><p className="text-xs text-white/75">{label}</p><p className="mt-2 text-xl">{money(Number(amount))}</p></div>)}</div>

@@ -1,7 +1,80 @@
 # Product implementation status
 
+## Loading experience and latency review (2026-09-30)
+
+Added shared lightweight themed loading scenes across the primary planning and
+travel-tool waits, with light/dark palettes, reduced motion and finite animation.
+Removed simulated planning-stage text. Added bounded public-provider memory caching,
+corrected soft-budget cache keys, protected successful responses from Redis write
+failures, and removed duplicated native Gemini prompt schemas.
+
+Backend suite: 167 passed. October 3 final verification: production build passed;
+full desktop/mobile browser suite 56 passed; cache-focused suite 5 passed, including
+the additional budget-reuse test. See [architecture review and limitations](LOADING_AND_LATENCY_REVIEW.md).
+No new live speed claims; no RAG or hosted changes.
+
+## Independent attraction research and review (2026-09-30)
+
+Attraction research no longer blocks itinerary generation. Bounded background work,
+short category-specific Maps queries, a dated public-place cache and one transient
+retry replace the initial broad organic query. Account-authorized research review is
+read-only until the traveler explicitly applies matching map references. Times, costs,
+activities and bookings are never automatically changed.
+
+Two concurrent live plans: Rome/6 days **25.992 s**, London/3 days **23.548 s**.
+Attraction research succeeded in **4.115 s / 3.846 s**, returning 12 candidates and
+four confident itinerary place-identity matches in each. This does not verify hours,
+admission or transit times and is not a production p95 claim.
+
+Added server-stage queue/first-options/first-draft/ready metrics and cache/length cohorts.
+P95 needs sufficient successful samples; failures remain separately visible. Validation
+includes cache reuse, ownership, retry limits and 200 simulated research submissions.
+See [research report and production activation caveat](ATTRACTION_RELIABILITY.md).
+
+Production research requires an explicitly enabled separate RQ worker; no hosted
+worker, service, migration or flag was activated. RAG remains deferred. No commits/pushes.
+
+## Non-RAG reliability follow-up (2026-09-30)
+
+- Reproduced Rome's empty flight query using `ROM`; the same query with `FCO,CIA`
+  returned 11 offers. Flight requests now expand metropolitan airport groups while
+  preserving explicit airport choices. Genuine empty inventory is not a provider error.
+- Day regeneration and guidebooks use one bounded direct request. Live samples took
+  14.430 s and 8.415 s respectively. Failed guidebooks no longer masquerade as complete.
+- Gemini streams validated days into read-only previews; final trip state remains
+  separate. Previews clear on completion, logout, new searches and saved-trip switching.
+- Sanitized provider errors; added exact-date, empty-day and source-support evaluation.
+- Capped concurrent live matrix: Rome/6 days 33.183 s, London/3 days 29.370 s,
+  Tokyo/10 days 26.966 s, all with usable flights and stays. Local research timed out
+  in all three. Source grounding/opening hours/transit accuracy are not claimed.
+- Full backend suite: **152 passed**. Full browser suite: **52 passed**. Production
+  build passed. Local API restarted and readiness/proxy checks passed; UI is on 5176.
+  Remaining transport/benchmark limitations are recorded in the performance report.
+
+RAG remains explicitly deferred. No commits, pushes, purchases, deployments or hosted
+infrastructure changes. See [performance details](PLANNING_PERFORMANCE.md).
+
+## Planning latency update (2026-09-29)
+
+Direct schema-constrained drafting replaces the default agent/fallback cascade. Interactive
+provider retries are disabled; generation has a shared deadline and one missing-day repair.
+Late cancelled results cannot complete the job or send its notification. Failure timings
+are retained without raw provider exception text. Existing providers/models remain unchanged.
+
+One live six-day sample: **32.195 s**, first stays at **6.303 s**, one LLM call. Flights
+failed in that sample; this is not an all-provider-success or p95 claim. Full backend:
+**141 passed**. Production build passed. See [performance report](PLANNING_PERFORMANCE.md)
+for the request cap, configuration, measured scope and remaining limitations.
+
+No commits, pushes, deployments or hosted infrastructure changes in this increment.
+
+Follow-up (2026-09-30): 10 desktop/mobile selection and production offline browser
+checks passed. Local API restarted on 5052; readiness and frontend proxy checks passed.
+Frontend remains on 5176. No commits or pushes.
+
 Scope: provider handoff, existing SerpAPI/OpenWeather integrations, owner-managed groups.
-No commits, deployments, hosted migrations, or service purchases.
+No commits, pushes, deployments, or service purchases. The explicitly approved hosted
+schema migration is recorded below; earlier entries describe their original local scope.
 
 | Phase | Status | Acceptance evidence |
 | --- | --- | --- |
@@ -13,6 +86,35 @@ No commits, deployments, hosted migrations, or service purchases.
 
 Each phase must pass its checks before the next is considered complete. Live provider
 latency and hosted infrastructure are not verified by fixture tests.
+
+## Calendar, light theme and route recovery (2026-09-29)
+
+- Added a responsive date-range calendar with keyboard navigation and manual input.
+- Added a device-persisted cream/blue/apricot light theme; dark remains the default.
+- Corrected overly strict verified-place matching and supported provider `data_id` identity.
+  Existing verified stops survive partial failures; unresolved stops can be retried and
+  resolved stops can be focused from the list. Ambiguous locations are not fabricated.
+- A bounded live Colosseum lookup resolved coordinates and source identity successfully.
+- Read-only timing analysis found the latest six-day job took 196.708 seconds: 50.965
+  seconds collecting providers and 145.024 seconds in a failed-fast/outline/day fallback
+  pipeline. Performance architecture recommendations are documented, not implemented
+  or presented as measured speedups in this UI increment.
+- Full backend run: 126 passed; subsequent endpoint-status tests: 4 passed. Focused
+  desktop/mobile calendar and map recovery checks: 4 passed. Broader final validation
+  is recorded in [the interface and map review](INTERFACE_AND_MAP_REVIEW.md).
+- No hosted schema/infrastructure changes, commits, or pushes. See the review for free
+  map-provider tradeoffs; no new map service has been activated.
+
+## Approved hosted schema migration (2026-09-28)
+
+- Upgraded the configured hosted database from `20260920_05` to `20260923_08`
+  with the user's explicit approval so the local app can use its existing feature tables.
+- Created a private, git-ignored public-schema backup; restored it into an isolated local
+  PostgreSQL instance and rehearsed the additive migrations before applying them remotely.
+- Verified the target revision and unchanged existing-row hashes after the hosted upgrade.
+  Completion evidence: `.secrets/migration-backups/20260928T154335Z-497a72/applied.json`.
+- No infrastructure, provider services, vault files, or account roles were changed by this
+  migration. This does not establish production readiness or live-provider performance.
 
 ## Product workspace increment (2026-09-28)
 

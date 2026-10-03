@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { TravelLoading } from "../loading/TravelLoading";
 import { useState } from "react";
 import type { HotelOption } from "../../domain/travel";
 import { apiFetch } from "../../api/client";
@@ -20,7 +21,7 @@ export function HotelDetails({ hotel, onClose, onSelectRate }: { hotel: HotelOpt
   return <Modal label={`Stay details: ${hotel.name}`} onClose={onClose}><section className="max-h-[90dvh] w-full max-w-4xl overflow-y-auto rounded-3xl border border-amber-200/20 bg-[#0e1518] p-5 sm:p-7">
     <header className="flex items-start justify-between gap-4"><div><p className="text-xs uppercase tracking-widest text-amber-100">Your possible home base</p><h2 className="mt-2 text-2xl text-white">{hotel.name}</h2><p className="mt-2 text-sm text-white/65">{details?.address}</p></div><button type="button" onClick={onClose} className="min-h-11 rounded-full border border-white/20 px-4">Close details</button></header>
     <p className="my-4 text-sm leading-relaxed text-white/70">{details?.description || hotel.description || "Property description not supplied."}</p>
-    {query.isFetching ? <p role="status" className="my-4 text-sm text-[#a9f1f1]">Loading property details…</p> : null}
+{query.isFetching ? <TravelLoading theme="stays" label="Opening property details" compact /> : null}
     {query.error ? <div role="alert" className="my-4 text-sm text-amber-100">{query.error.message}<button type="button" onClick={() => void query.refetch()} className="ml-3 min-h-11 rounded-full border border-amber-100/30 px-4">Retry details</button></div> : null}
     {!hotel.snapshot_id || (details && details.status !== "success") ? <p className="my-3 text-sm text-amber-100">{details?.message || "Refresh this historical stay to load current details."}</p> : null}
     {!!details?.images?.length && <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">{details.images.map((url, index) => <PropertyPhoto key={url} url={url} label={`${hotel.name}, property photo ${index + 1}`} />)}</div>}

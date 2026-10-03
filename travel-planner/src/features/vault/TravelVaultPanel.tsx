@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState, type ChangeEvent, type ReactNode } from "react";
+import { TravelLoading } from "../loading/TravelLoading";
 import { CalendarClock, Download, FileImage, FileKey2, FileText, FolderLock, LockKeyhole, Plus, ShieldCheck, Trash2, UploadCloud, X } from "lucide-react";
 
 import { apiFetch, readApiJson } from "../../api/client";
@@ -64,6 +65,7 @@ export function TravelVaultPanel({ trip, onClose }: { trip: SavedTrip | null; on
         <div className="relative z-10 mt-7 flex flex-wrap gap-3"><VaultStat label="Documents" value={`${documents.length}`} icon={<FolderLock size={16}/>}/><VaultStat label="Needs attention" value={`${expiring}`} icon={<CalendarClock size={16}/>}/><VaultStat label="Privacy" value="Private" icon={<ShieldCheck size={16}/>}/></div>
       </header>
 
+      {busy && <TravelLoading theme="documents" label="Updating your document vault" compact />}
       <div className="grid gap-5 p-4 sm:p-6 lg:grid-cols-[360px_1fr] lg:p-8">
         <section className="vault-upload-card rounded-[28px] p-5 sm:p-6">
           <div className="grid h-12 w-12 place-items-center rounded-2xl bg-[#f1bf75]/12 text-[#f1bf75]"><UploadCloud size={22}/></div><h3 className="mt-5 text-2xl font-medium tracking-[-.03em] text-white">Add a document</h3><p className="mt-2 text-sm leading-5 text-white/42">PDF, JPG, PNG, or WebP. Up to 8 MB.</p>

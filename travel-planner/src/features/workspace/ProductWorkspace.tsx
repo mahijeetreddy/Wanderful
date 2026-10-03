@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { TravelLoading } from "../loading/TravelLoading";
 import { GitCompareArrows, Inbox, Sun, X } from "lucide-react";
 import type { SavedTrip } from "../../domain/travel";
 import { apiFetch, readApiJson } from "../../api/client";
@@ -35,7 +36,7 @@ function WorkspaceDialog({ mode, trip, onUpdated, onClose }: { mode: "compare" |
   const title = mode === "compare" ? "What if trip comparison" : mode === "inbox" ? "Booking inbox" : "Today travel mode";
   return <Modal label={title} onClose={onClose}><section className="w-full max-w-5xl rounded-[28px] border border-white/20 bg-[#0d2026] p-4 shadow-2xl sm:p-8" onClick={e => e.stopPropagation()}><header className="mb-6 flex items-center justify-between gap-3"><h2 className="text-lg text-slate-200">{title}</h2><button className="action-button" aria-label={`Close ${title}`} onClick={onClose}><X size={20} /></button></header>
     {error && <p role="alert" className="mb-4 text-amber-100">{error} <button className={secondary} onClick={() => setRetry(n => n + 1)}>Retry</button></p>}
-    {!loaded && !error && <p role="status">Loading your trip tools…</p>}
+{!loaded && !error && <TravelLoading theme="documents" label="Loading your trip tools" />}
     {loaded && mode === "compare" && <WhatIfComparison trip={trip} records={records} save={save} remove={remove} busy={busy} />}
     {loaded && mode === "inbox" && <BookingInbox tripId={trip.id} records={records} save={save} remove={remove} busy={busy} />}
     {mode === "today" && <TodayMode destination={trip.destination} days={trip.structuredItinerary?.days || []} currency={trip.form.currency_code} timezone={trip.form.destination_timezone} bookings={records.flatMap(r => r.type === "inbox" ? [r.data] : [])} />}

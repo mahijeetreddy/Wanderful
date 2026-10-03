@@ -8,15 +8,20 @@ from dataclasses import asdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from typing import Any
+from contextvars import ContextVar
+import provider_memory_cache
 
 from main import TravelInputs
+from direct_planner import setting
 from offers import classify_result, offer_metadata, stable_offer_id
 from ranking import rank_flights, rank_hotels, score_activity
 from reliability import increment_metric, provider_call, record_timing
 from runtime_store import get_cached_response, set_cached_response
 from tools import FlightSearchTool, HotelSearchTool, LocalSearchTool, WeatherForecastTool, normalize_airport_id
+from tools import interactive_provider_budget, has_interactive_budget
 
 NearbyAirports = dict[str, list[dict[str, str]]]
+_cache_observation: ContextVar[dict | None] = ContextVar("provider_cache_observation", default=None)
 
 NEARBY_AIRPORTS: NearbyAirports = {
     "LAX": [{"code": "BUR", "label": "Burbank"}, {"code": "SNA", "label": "Orange County"}, {"code": "ONT", "label": "Ontario"}],
@@ -32,7 +37,9 @@ NEARBY_AIRPORTS: NearbyAirports = {
 
 
 def collect_trip_data(travel_inputs: TravelInputs, on_partial: Any = None) -> dict[str, Any]:
-    """Collect live provider data deterministically before CrewAI writes the plan."""
+    """Collect bookable options; attraction research never gates generation."""
+    from attraction_research import start_research, lookup_research
+    research_start = start_research(travel_inputs.destination, travel_inputs.interests)
     flight_budget = _budget_slice(travel_inputs.budget, 0.35)
     nightly_hotel_budget = _nightly_budget(travel_inputs.budget, 0.38, travel_inputs.start_date, travel_inputs.end_date)
     provider_tasks = {
@@ -45,7 +52,7 @@ def collect_trip_data(travel_inputs: TravelInputs, on_partial: Any = None) -> di
                 "departure_date": travel_inputs.start_date,
                 "return_date": travel_inputs.end_date,
                 "adults": travel_inputs.adults,
-                "max_price": flight_budget,
+                "max_price": None,
                 "currency_code": travel_inputs.currency_code,
             },
             call=lambda: FlightSearchTool()._run(
@@ -66,7 +73,7 @@ def collect_trip_data(travel_inputs: TravelInputs, on_partial: Any = None) -> di
                 "check_in_date": travel_inputs.start_date,
                 "check_out_date": travel_inputs.end_date,
                 "adults": travel_inputs.adults,
-                "nightly_budget": nightly_hotel_budget,
+                "nightly_budget": None,
                 "currency_code": travel_inputs.currency_code,
             },
             call=lambda: HotelSearchTool()._run(
@@ -92,24 +99,13 @@ def collect_trip_data(travel_inputs: TravelInputs, on_partial: Any = None) -> di
                 end_date=travel_inputs.end_date,
             ),
         ),
-        "local_search": lambda: _cached_provider_call(
-            provider="local_search",
-            ttl_seconds=86400,
-            payload={
-                "destination": travel_inputs.destination,
-                "interests": travel_inputs.interests,
-                "query_type": "attractions restaurants neighborhoods and day trips",
-                "max_results": 8,
-            },
-            call=lambda: LocalSearchTool()._run(
-                destination=travel_inputs.destination,
-                interests=travel_inputs.interests,
-                query_type="attractions restaurants neighborhoods and day trips",
-                max_results=8,
-            ),
-        ),
     }
     provider_results, collection_metrics = _run_provider_tasks_with_metrics(provider_tasks, on_partial)
+    research = lookup_research(travel_inputs.destination, travel_inputs.interests)
+    provider_results["local_search"] = json.dumps({"results": [{"title": item["title"], "link": item["source_url"], "snippet": item["address"]} for item in research.get("places", [])]}) if research.get("status") == "success" else "Local search unavailable; independent research is pending or could not complete."
+    collection_metrics["research"] = {"status_at_generation": research.get("status"), "cache_hit": research_start.get("cache_hit", False)}
+    if on_partial:
+        on_partial("local_search", provider_results["local_search"])
     flight_result = str(provider_results["flights"])
     hotel_result = str(provider_results["hotels"])
     flight_options = normalize_flight_options(flight_result)
@@ -284,15 +280,24 @@ def _run_provider_tasks_with_metrics(tasks: dict[str, Any], on_partial: Any = No
     started = time.perf_counter()
     results: dict[str, str] = {}
     timings: dict[str, int] = {}
+    cache_status: dict[str, bool | None] = {}
     first_useful_ms = None
     max_workers = max(1, min(len(tasks), 4))
 
     def timed(name: str, task: Any) -> str:
         provider_started = time.perf_counter()
+        observation = {}
+        token = _cache_observation.set(observation)
         try:
-            return str(task())
+            seconds = setting("PLAN_PROVIDER_SECONDS", 15, 3, 30)
+            if name == "local_search":
+                seconds = min(seconds, 10)
+            with interactive_provider_budget(seconds):
+                return str(task())
         finally:
             timings[name] = round((time.perf_counter() - provider_started) * 1000)
+            cache_status[name] = observation.get("cache_hit")
+            _cache_observation.reset(token)
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {pool.submit(timed, name, task): name for name, task in tasks.items()}
@@ -301,11 +306,13 @@ def _run_provider_tasks_with_metrics(tasks: dict[str, Any], on_partial: Any = No
             try:
                 results[name] = str(future.result())
             except Exception as exc:
-                results[name] = f"{name.replace('_', ' ').title()} failed: {exc}"
+                failure_status = classify_result(str(exc))["status"]
+                category = "request timed out" if "timeout" in type(exc).__name__.lower() or failure_status == "timeout" else "capability unavailable" if failure_status == "unavailable" else "provider error"
+                results[name] = f"{name.replace('_', ' ').title()} failed: {category}"
             if first_useful_ms is None:
                 try:
                     parsed = json.loads(results[name])
-                    if isinstance(parsed, dict) and any(parsed.get(key) for key in ("best_flights", "other_flights", "flights", "properties", "hotels")):
+                    if isinstance(parsed, dict) and any(parsed.get(key) for key in ("offers", "best_flights", "other_flights", "flights", "properties", "hotels")):
                         first_useful_ms = round((time.perf_counter() - started) * 1000)
                 except (TypeError, ValueError):
                     pass
@@ -313,6 +320,7 @@ def _run_provider_tasks_with_metrics(tasks: dict[str, Any], on_partial: Any = No
                 on_partial(name, results[name])
     return results, {
         "provider_ms": timings,
+        "provider_cache": cache_status,
         "first_useful_ms": first_useful_ms,
         "total_ms": round((time.perf_counter() - started) * 1000),
         "parallel_workers": max_workers,
@@ -322,14 +330,26 @@ def _run_provider_tasks_with_metrics(tasks: dict[str, Any], on_partial: Any = No
 def _cached_provider_call(provider: str, ttl_seconds: int, payload: dict[str, Any], call: Any, bypass_cache: bool = False) -> str:
     started = time.perf_counter()
     cache_key = _cache_key(provider, payload)
-    cached = None if bypass_cache else get_cached_response(cache_key)
+    # Only public query results belong here; account state stays outside this cache.
+    cached = None if bypass_cache else provider_memory_cache.get(cache_key)
+    if cached is None and not bypass_cache:
+        cached = get_cached_response(cache_key)
+    observation = _cache_observation.get()
+    if observation is not None:
+        observation["cache_hit"] = isinstance(cached, str)
     if isinstance(cached, str):
         record_timing("cached_provider_ms", (time.perf_counter() - started) * 1000)
         increment_metric("cache_hits")
         return cached
     increment_metric("cache_misses")
-    result = str(provider_call(provider, call, retries=_provider_retries()))
-    set_cached_response(cache_key, provider, result, ttl_seconds)
+    result = str(provider_call(provider, call, retries=0 if has_interactive_budget() else _provider_retries()))
+    if classify_result(result)["status"] == "success":
+        provider_memory_cache.put(cache_key, result, ttl_seconds)
+        try:
+            set_cached_response(cache_key, provider, result, ttl_seconds)
+        except Exception:
+            # An optional cache outage must not discard successful provider data.
+            increment_metric("provider_cache_write_failures")
     return result
 
 
@@ -481,7 +501,7 @@ def search_flight_options_from_instruction(travel_inputs: TravelInputs, instruct
             "departure_date": adjusted.start_date,
             "return_date": adjusted.end_date,
             "adults": adjusted.adults,
-            "max_price": flight_budget,
+            "max_price": None,
             "currency_code": adjusted.currency_code,
         },
         call=lambda: FlightSearchTool()._run(

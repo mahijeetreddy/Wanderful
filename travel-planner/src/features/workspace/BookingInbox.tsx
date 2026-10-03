@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { TravelLoading } from "../loading/TravelLoading";
 import { Inbox, Plus, Upload } from "lucide-react";
 import { apiFetch, readApiJson } from "../../api/client";
 import { field, message, primary, secondary, type InboxBooking, type ToolRecord } from "./types";
@@ -14,6 +15,7 @@ export function BookingInbox({ tripId, records, save, remove, busy }: { tripId: 
     <p className="text-sm text-slate-300">Review confirmations here. Payments and selected offers stay unchanged.</p>
     {error && <p role="alert" className="text-amber-100">{error}</p>}
     {notice && <p role="status" className="text-[#91e4db]">{notice}</p>}
+    {(extracting || busy) && <TravelLoading theme="documents" label={extracting ? "Reading your confirmation" : "Updating your booking inbox"} compact />}
     {draft && <form className="space-y-4 rounded-2xl border border-[#e8cd95]/30 bg-[#16282b] p-4 sm:p-6" onSubmit={async e => { e.preventDefault(); setError(""); try { await save(identity, "inbox", draft); setDraft(null); setRaw(""); setNotice("Booking saved. No payment or selection was changed."); } catch (e) { setError(message(e)); } }}>
       <details><summary className="min-h-11 cursor-pointer py-3 text-[#e8cd95]"><Upload size={16} className="mr-2 inline" />Import a confirmation</summary><p className="text-sm text-slate-300">Paste text or upload .txt / .eml (100 KB max). PDF and image extraction are not supported yet; enter those details below.</p>
         <label className="mt-3 block text-sm">Confirmation file<input className={field} type="file" accept=".txt,.eml,text/plain,message/rfc822" onChange={async e => { const file = e.target.files?.[0]; if (!file) return; if (file.size > 100_000 || !/\.(txt|eml)$/i.test(file.name)) { setError("Choose a .txt or .eml file under 100 KB."); return; } try { setRaw(await file.text()); setFilename(file.name); setError(""); } catch (e) { setError(message(e)); } }} /></label>

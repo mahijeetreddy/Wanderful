@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { TravelLoading } from "../loading/TravelLoading";
 import type { FlightOption, HotelOption, SavedTrip, SearchSession } from "../../domain/travel";
 import { apiFetch, readApiJson } from "../../api/client";
 import { field, message, primary, secondary, type Scenario, type ToolRecord } from "./types";
@@ -45,6 +46,8 @@ export function WhatIfComparison({ trip, records, save, remove, busy }: { trip: 
     <form className="space-y-4 rounded-2xl border border-white/20 bg-white/5 p-5" onSubmit={async e => { e.preventDefault(); setError(""); try { await save(`tool-${crypto.randomUUID()}`, "scenario", { name, start_date: start, end_date: end, flights_snapshot_id: flight || undefined, hotels_snapshot_id: hotel || undefined, assumptions: { destination_timezone: zone } }); } catch (e) { setError(message(e)); } }}>
       <div className="grid gap-4 sm:grid-cols-3"><label className="text-sm">Alternative name<input className={field} required maxLength={100} value={name} onChange={e => setName(e.target.value)} /></label><label className="text-sm">Departure date<input className={field} type="date" required value={start} onChange={e => changeDates(e.target.value, true)} /></label><label className="text-sm">Return date<input className={field} type="date" required min={start} value={end} onChange={e => changeDates(e.target.value, false)} /></label></div>
       <button type="button" className={secondary} disabled={!start || end <= start} onClick={() => void search()}>{searching ? "Restart search" : "Search these dates"}</button>
+      {(status.flights === "searching" || returnBusy) && <TravelLoading theme="flights" label={returnBusy ? "Finding your return flight" : "Finding alternative flights"} compact />}
+      {status.hotels === "searching" && <TravelLoading theme="stays" label="Finding alternative stays" compact />}
       {Object.keys(status).length > 0 && <p role="status" className="text-sm text-slate-300">Flights: {status.flights} · Stays: {status.hotels}</p>}
       {flights.some(o => o.snapshot_id && !o.has_return_details && o.departure_token) && <div className="rounded-xl border border-white/20 p-4"><label className="block text-sm">Complete an outbound flight<select className={field} value={outbound} onChange={e => setOutbound(e.target.value)}><option value="">Choose outbound</option>{flights.filter(o => o.snapshot_id && !o.has_return_details && o.departure_token).map(o => <option key={o.snapshot_id} value={o.snapshot_id}>{o.segments?.[0]?.airline || "Flight"} · {o.segments?.[0]?.depart_at || "time unknown"}</option>)}</select></label><button type="button" className={`${secondary} mt-3`} disabled={!outbound || returnBusy} onClick={async () => {
         returnRequest.current?.abort(); const controller = new AbortController(); returnRequest.current = controller;

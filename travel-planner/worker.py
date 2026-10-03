@@ -16,7 +16,10 @@ def main() -> None:
     # Worker forks a work-horse process per job for crash isolation and hard timeouts; os.fork
     # doesn't exist on Windows, so local dev falls back to SimpleWorker (runs jobs in-process).
     worker_class = Worker if hasattr(os, "fork") else SimpleWorker
-    worker = worker_class([Queue("planning", connection=connection)], connection=connection)
+    queue_name = os.getenv("RQ_WORKER_QUEUE", "planning")
+    if queue_name not in {"planning", "research"}:
+        raise ValueError("RQ_WORKER_QUEUE must be planning or research.")
+    worker = worker_class([Queue(queue_name, connection=connection)], connection=connection)
     worker.work(with_scheduler=True)
 
 

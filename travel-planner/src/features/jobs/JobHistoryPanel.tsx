@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { TravelLoading } from "../loading/TravelLoading";
 import { Clock, Loader2, RotateCcw, XCircle } from "lucide-react";
 import { apiFetch, readApiJson } from "../../api/client";
 
@@ -44,7 +45,7 @@ export function JobHistoryPanel({ open, onClose }: { open: boolean; onClose: () 
         </div>
         <button type="button" onClick={refresh} className="mt-5 inline-flex items-center gap-2 rounded-full border border-white/12 px-3 py-2 text-sm text-white/68"><RotateCcw size={14} /> Refresh</button>
         {error ? <p className="mt-4 text-sm text-red-100">{error}</p> : null}
-        {loading ? <Loader2 className="mx-auto mt-8 animate-spin text-white/60" /> : null}
+{loading ? <TravelLoading theme="itinerary" label="Loading your recent trips" /> : null}
         <div className="mt-5 space-y-3">
           {jobs.map((job) => (
             <article key={job.id} className="rounded-[22px] border border-white/10 bg-white/[0.055] p-4">

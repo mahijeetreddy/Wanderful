@@ -1,5 +1,5 @@
 from dataclasses import replace
-from unittest.mock import Mock, call, patch
+from unittest.mock import ANY, Mock, call, patch
 
 import pytest
 
@@ -84,7 +84,9 @@ def test_execute_plan_job_preserves_safe_provider_error():
         status="failed",
         progress="Planner failed.",
         error="Planning timed out while waiting for an external provider.",
+        metrics=ANY,
     )
+    assert updates.call_args.kwargs["metrics"]["journey"]["trip_days"] == 4
 
 
 def test_execute_plan_job_honors_early_cancellation():
@@ -99,3 +101,31 @@ def test_worker_requires_redis_connection():
     with patch("worker.validate_production_settings"), patch("worker.rq_redis_client", return_value=None):
         with pytest.raises(RuntimeError, match="REDIS_URL"):
             worker.main()
+
+
+def test_cancellation_during_generation_cannot_publish_or_email():
+    with (
+        patch("job_tasks.cancellation_requested", side_effect=[False, False, True]),
+        patch("job_tasks.collect_trip_data", return_value={"options": {}}),
+        patch("job_tasks.generate_structured_plan", return_value=(Mock(), {})),
+        patch("job_tasks.update_plan_job") as update,
+        patch("job_tasks.send_plan_ready") as email,
+    ):
+        job_tasks.execute_plan_job("job-1", TRAVEL_INPUTS)
+    assert update.call_args.kwargs["status"] == "cancelled"
+    assert not any(item.kwargs.get("status") == "complete" for item in update.call_args_list)
+    email.assert_not_called()
+
+
+def test_failed_generation_keeps_timings():
+    from direct_planner import PlanningFailure
+    with (
+        patch("job_tasks.cancellation_requested", return_value=False),
+        patch("job_tasks.collect_trip_data", return_value={"options": {}, "collection_metrics": {"total_ms": 100}}),
+        patch("job_tasks.generate_structured_plan", side_effect=PlanningFailure("timeout", {"llm_calls": 1})),
+        patch("job_tasks.update_plan_job") as update,
+    ):
+        job_tasks.execute_plan_job("job-1", TRAVEL_INPUTS)
+    assert update.call_args.kwargs["status"] == "failed"
+    assert update.call_args.kwargs["metrics"]["planning"]["llm_calls"] == 1
+    assert update.call_args.kwargs["metrics"]["collection"]["total_ms"] == 100

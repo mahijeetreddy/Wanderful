@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from urllib.parse import urlparse
 
@@ -16,7 +16,10 @@ def evaluate_itinerary(
     expected_days = (datetime.fromisoformat(expected_end) - datetime.fromisoformat(expected_start)).days + 1
     dates = [str(day.get("date") or "") for day in days if isinstance(day, dict)]
     duplicate_dates = len(dates) - len(set(dates))
-    missing_days = max(0, expected_days - len(set(dates)))
+    expected_dates = {(datetime.fromisoformat(expected_start) + timedelta(days=index)).date().isoformat() for index in range(expected_days)}
+    missing_days = len(expected_dates - set(dates))
+    unexpected_days = len(set(dates) - expected_dates)
+    empty_days = sum(not day.get("activities") for day in days if isinstance(day, dict))
     estimated_total = float(itinerary.get("estimated_total") or 0)
     budget_violation = max(0.0, estimated_total - budget)
     schedule_conflicts = _schedule_conflicts(days)
@@ -28,20 +31,28 @@ def evaluate_itinerary(
     scores = {
         "structured_output_valid": valid_structure,
         "missing_days": missing_days,
+        "unexpected_days": unexpected_days,
+        "empty_days": empty_days,
         "duplicate_days": duplicate_dates,
         "budget_overrun": round(budget_violation, 2),
         "schedule_conflicts": schedule_conflicts,
         "invalid_links": invalid_links,
         "unsupported_links": unsupported_links,
         "provider_grounding_rate": _grounding_rate(days, provider_urls or set()),
+        "opening_hours_verified": None,
+        "transfer_times_verified": None,
+        "factual_grounding_verified": None,
         "fallback_used": any("fallback" in str(item).lower() for item in itinerary.get("validation_warnings", [])),
     }
     scores["passed"] = bool(
         valid_structure
         and missing_days == 0
+        and unexpected_days == 0
+        and empty_days == 0
         and duplicate_dates == 0
         and schedule_conflicts == 0
         and invalid_links == 0
+        and unsupported_links == 0
     )
     return scores
 
@@ -74,7 +85,7 @@ def _link_scores(days: list[Any], provider_urls: set[str]) -> tuple[int, int]:
             parsed = urlparse(url)
             if parsed.scheme not in {"http", "https"} or not parsed.netloc:
                 invalid += 1
-            elif provider_urls and url not in provider_urls:
+            elif url not in provider_urls:
                 unsupported += 1
     return invalid, unsupported
 
@@ -92,6 +103,6 @@ def _grounding_rate(days: list[Any], provider_urls: set[str]) -> float:
     grounded = sum(
         1
         for activity in activities
-        if activity.get("source_url") and (not provider_urls or activity["source_url"] in provider_urls)
+        if activity.get("source_url") and activity["source_url"] in provider_urls
     )
     return round(grounded / len(activities), 3)

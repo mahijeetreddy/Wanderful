@@ -30,6 +30,8 @@ def isolated_database_lifetime():
 
 @pytest.fixture(autouse=True)
 def reset_database():
+    from provider_memory_cache import clear
+    clear()
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
     yield

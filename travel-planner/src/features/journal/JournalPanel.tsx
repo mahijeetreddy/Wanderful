@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { TravelLoading } from "../loading/TravelLoading";
 import { BookOpen, Loader2, Pencil, Trash2 } from "lucide-react";
 import { apiFetch, readApiJson } from "../../api/client";
 import { Modal } from "../search/Modal";
@@ -136,7 +137,7 @@ export function JournalPanel({
         </div>
 
         {error ? <p className="mt-4 text-sm text-red-100">{error}</p> : null}
-        {loading ? <Loader2 className="mx-auto mt-8 animate-spin text-white/60" /> : null}
+{loading ? <TravelLoading theme="documents" label="Opening your travel journal" /> : null}
 
         <div className="mt-5 space-y-3">
           {entries.map((entry, index) => (

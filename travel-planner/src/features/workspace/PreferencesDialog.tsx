@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { SlidersHorizontal, X } from "lucide-react";
 import { apiFetch, readApiJson } from "../../api/client";
 import { Modal } from "../search/Modal";
+import { TravelLoading } from "../loading/TravelLoading";
 import { field, message, primary, type PersonalPreferences } from "./types";
 
 export function PreferencesButton() {
@@ -22,7 +23,7 @@ function PreferencesDialog({ onClose }: { onClose: () => void }) {
     <div className="flex items-start justify-between gap-4"><div><p className="text-xs uppercase tracking-[.2em] text-[#91e4db]">Made for you</p><h2 className="mt-2 text-3xl">Your kind of travel.</h2></div><button aria-label="Close preferences" className="action-button" onClick={onClose}><X size={20} /></button></div>
     <p className="mt-3 text-sm text-slate-300">Defaults for future plans. Your current trip stays unchanged.</p>
     {error && <p role="alert" className="my-4 text-amber-100">{error} {!value && <button className="underline" onClick={() => setRetry(n => n + 1)}>Retry</button>}</p>}
-    {!value ? <p className="mt-5">Loading preferences…</p> : <form className="mt-6 space-y-5" onSubmit={async e => { e.preventDefault(); e.stopPropagation(); setBusy(true); setError(""); try { await readApiJson(await apiFetch("/api/travel-preferences", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ preferences: value, expected_revision: revision }) })); onClose(); } catch (e) { setError(message(e)); } finally { setBusy(false); } }}>
+    {!value ? (!error && <TravelLoading theme="account" label="Loading your preferences" />) : <form className="mt-6 space-y-5" onSubmit={async e => { e.preventDefault(); e.stopPropagation(); setBusy(true); setError(""); try { await readApiJson(await apiFetch("/api/travel-preferences", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ preferences: value, expected_revision: revision }) })); onClose(); } catch (e) { setError(message(e)); } finally { setBusy(false); } }}>
       <div className="grid gap-5 sm:grid-cols-2">{groups.map(group => <fieldset key={group.key}><legend className="mb-2 text-sm text-slate-200">{group.label}</legend><div className="flex flex-wrap gap-2">{group.choices.map(choice => <label key={choice} className={`cursor-pointer rounded-xl border px-3 py-3 text-sm capitalize ${value[group.key] === choice ? "border-[#91e4db] bg-[#214940] text-white" : "border-white/20 text-slate-200"}`}><input className="mr-2 accent-[#91e4db]" type="radio" name={group.key} value={choice} checked={value[group.key] === choice} onChange={() => setValue({ ...value, [group.key]: choice })} />{choice}</label>)}</div></fieldset>)}</div>
       <label className="block text-sm">Interests & personal priorities<textarea className={field} maxLength={600} value={value.interests} placeholder="Local food, quiet mornings, architecture…" onChange={e => setValue({ ...value, interests: e.target.value })} /></label>
       <button className={primary} disabled={busy}>{busy ? "Saving…" : "Save preferences"}</button>

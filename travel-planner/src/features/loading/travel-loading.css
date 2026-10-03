@@ -1,0 +1,27 @@
+.travel-loading {
+  --loading-blue: #9cdce4; --loading-gold: #ecc27e; --loading-ink: #234955;
+  display: grid; justify-items: center; gap: 8px; padding: 24px 16px;
+  border: 1px solid var(--border, #294247); border-radius: 24px;
+  background: var(--surface-soft, #102126); color: var(--text, #eaf7f8);
+  margin-block: 12px; overflow: hidden;
+}
+[data-theme="light"] .travel-loading { --loading-blue: #b9dfef; --loading-gold: #e8a065; }
+.travel-loading__scene { width: min(100%, 240px); height: 120px; overflow: visible; }
+.travel-loading__sun { fill: var(--loading-gold); opacity: .45; }
+.travel-loading__ground { stroke: var(--loading-blue); stroke-width: 2; opacity: .3; }
+.travel-loading__clouds { color: var(--loading-blue); opacity: .5; animation: travel-clouds 4s ease-out both; }
+.travel-loading__hero { transform-origin: center; animation: travel-arrive 1s ease-out both; }
+.travel-loading__plane { animation: travel-takeoff 4s ease-in-out both; }
+.travel-loading__window { fill: var(--loading-gold); animation: travel-window 3s ease both; }
+.travel-loading__label { margin: 0; font-size: 14px; font-weight: 500; text-align: center; color: inherit; }
+.travel-loading__pause { min-height: 44px; padding: 8px 12px; font-size: 12px; color: inherit; text-decoration: underline; text-underline-offset: 4px; }
+.travel-loading__pause:focus-visible { outline: 2px solid var(--loading-gold); outline-offset: 2px; border-radius: 8px; }
+.travel-loading--compact { display: flex; gap: 12px; padding: 8px 12px; border-radius: 16px; }
+.travel-loading--compact .travel-loading__scene { width: 88px; height: 48px; flex-shrink: 0; }
+.travel-loading--compact .travel-loading__label { text-align: left; }
+.travel-loading[data-paused="true"] * { animation-play-state: paused; }
+@keyframes travel-takeoff { 0% { transform: translate(-24px, 13px) rotate(3deg); } 45% { transform: translate(0, 8px); } 100% { transform: translate(13px, -8px) rotate(-8deg); } }
+@keyframes travel-clouds { from { transform: translateX(12px); opacity: .2; } to { transform: translateX(-8px); opacity: .5; } }
+@keyframes travel-arrive { from { transform: translateY(8px); } to { transform: translateY(0); } }
+@keyframes travel-window { from { opacity: .2; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .travel-loading * { animation: none !important; } .travel-loading__pause { display: none; } }

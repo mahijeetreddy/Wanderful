@@ -75,3 +75,18 @@ def test_route_map_resolves_stops_concurrently(client):
     assert response.status_code == 200
     assert len(response.get_json()["stops"]) == 2
     assert response.get_json()["unresolved"] == 0
+
+
+def test_route_map_distinguishes_outage_and_missing_configuration(client, monkeypatch):
+    from places import PlaceLookupError
+    _register(client)
+    payload = {"destination": "Rome", "stops": [{"title": "Colosseum", "location": "Colosseum"}]}
+    monkeypatch.setenv("SERPAPI_API_KEY", "fixture")
+    with patch("places.lookup_place", side_effect=PlaceLookupError("Unavailable")):
+        result = client.post("/api/route-map", json=payload).get_json()
+    assert result["status"] == "provider_error"
+    assert result["stops"] == []
+    monkeypatch.delenv("SERPAPI_API_KEY")
+    with patch("places.lookup_place", return_value=None):
+        result = client.post("/api/route-map", json=payload).get_json()
+    assert result["status"] == "unavailable"

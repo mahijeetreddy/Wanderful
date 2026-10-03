@@ -1,4 +1,5 @@
 import { FlightJourney } from "./FlightJourney";
+import { TravelLoading } from "../loading/TravelLoading";
 import { recordHandoff } from "../search/handoff";
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
@@ -24,6 +25,7 @@ export function FlightOptionsPanel({
   onLockFlight,
   onFlightsUpdated,
   providerStatus,
+  pending = false,
 }: {
   form: PlannerForm;
   flights: FlightOption[];
@@ -33,6 +35,7 @@ export function FlightOptionsPanel({
   onLockFlight: (flightId: string) => void;
   onFlightsUpdated: (flights: FlightOption[]) => void;
   providerStatus?: ProviderStatus;
+  pending?: boolean;
 }) {
   const [instruction, setInstruction] = useState("");
   const [filters, setFilters] = useState(initialFilters);
@@ -109,6 +112,7 @@ export function FlightOptionsPanel({
   return (
     <div className="grid gap-5 p-4 sm:p-5 lg:grid-cols-[1fr_360px]">
       <div className="space-y-3">
+        {(loading || pending) && <TravelLoading theme="flights" compact={currentFlights.length > 0} />}
         <ProviderRetry form={form} kind="flights" status={providerStatus} onResults={(result) => {
           const retained = currentFlights.filter((offer) => offer.id === lockedFlightId);
           onFlightsUpdated([...retained, ...(result.flights || []).filter((offer) => offer.id !== lockedFlightId)]);
@@ -205,7 +209,7 @@ export function FlightOptionsPanel({
               </div>
             </article>
           ))
-        ) : !currentFlights.length ? (
+        ) : !currentFlights.length && !loading && !pending && providerStatus !== "searching" && providerStatus !== "queued" ? (
           <EmptyResult
             icon={<Plane size={18} />}
             title="No flight options returned"
@@ -437,6 +441,7 @@ function FlightDetailModal({
         className="max-h-[88vh] w-[min(94vw,920px)] overflow-auto rounded-[34px] border border-[#3fb6c4]/16 bg-[linear-gradient(145deg,rgba(22,22,22,0.97),rgba(6,6,6,0.96))] p-6 shadow-[0_34px_120px_rgba(0,0,0,0.62)] sm:p-8"
         onClick={(event) => event.stopPropagation()}
       >
+        {(loadingReturns || loadingBookings) && <TravelLoading theme="flights" label={loadingReturns ? "Finding your return flight" : "Finding booking options"} compact />}
         <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/45">Flight Details</p>

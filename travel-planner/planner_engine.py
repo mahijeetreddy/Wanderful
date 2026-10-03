@@ -15,6 +15,7 @@ os.environ["LOCALAPPDATA"] = os.getenv("CREWAI_LOCALAPPDATA", str(Path.cwd() / "
 from crewai import Agent, Crew, Process, Task
 
 from agents import create_llm
+from direct_planner import generate_direct_plan, request_object, compact_context, DraftDay
 from guidebook_schema import GuidebookContent
 from itinerary_schema import ActivityBlock, BudgetCategory, StructuredDay, StructuredItinerary
 from main import TravelInputs
@@ -24,25 +25,16 @@ from ranking import score_activity
 def generate_structured_plan(
     travel_inputs: TravelInputs,
     trip_data: dict[str, Any],
+    on_days: Any = None,
 ) -> tuple[StructuredItinerary, dict[str, Any]]:
     started = time.perf_counter()
     if os.getenv("FAST_PLAN_MODE", "true").strip().lower() in {"1", "true", "yes", "on"}:
-        fast_started = time.perf_counter()
-        try:
-            plan = _generate_complete_plan(travel_inputs, trip_data)
-            validated = validate_structured_itinerary(plan, travel_inputs)
-            total_ms = round((time.perf_counter() - started) * 1000)
-            return validated, {
-                "planning_mode": "single_pass",
-                "generation_ms": round((time.perf_counter() - fast_started) * 1000),
-                "total_ms": total_ms,
-                "day_count": len(validated.days),
-                "llm_calls": 1,
-                "fallback_used": False,
-            }
-        except Exception:
-            # Preserve the proven outline/day-expansion pipeline as a resilient fallback.
-            pass
+        plan, metrics = generate_direct_plan(travel_inputs, trip_data, on_days=on_days)
+        validated = validate_structured_itinerary(plan, travel_inputs)
+        if any(not day.activities for day in validated.days):
+            from direct_planner import PlanningFailure
+            raise PlanningFailure("empty_day_after_validation", metrics)
+        return validated, metrics
     outline_started = time.perf_counter()
     outline, outline_fallback = _generate_outline(travel_inputs, trip_data)
     outline_ms = round((time.perf_counter() - outline_started) * 1000)
@@ -66,34 +58,6 @@ def generate_structured_plan(
         "fallback_used": True,
     }
     return validated, metrics
-
-
-def _generate_complete_plan(travel_inputs: TravelInputs, trip_data: dict[str, Any]) -> StructuredItinerary:
-    dates = _trip_dates(travel_inputs.start_date, travel_inputs.end_date)
-    prompt = f"""
-Return one complete JSON object only for a production-ready structured itinerary.
-
-Traveler inputs:
-{json.dumps(travel_inputs.as_crew_inputs(), indent=2)}
-Trip dates (include exactly one day for every date):
-{json.dumps(dates)}
-Verified provider context:
-{_provider_context(trip_data)}
-
-Required top-level keys:
-origin, destination, start_date, end_date, currency_code, adults, trip_summary,
-recommended_hotel_id, recommended_flight_id, budget_categories, days,
-packing_list, logistics, risks, estimated_total, validation_warnings.
-
-Each day requires day_number, date, title, summary, activities, estimated_cost,
-weather_note, transit_note, backup_plan. Each activity requires time, period,
-title, description, location, estimated_cost, indoor, source_url. Use 3-5
-realistically paced activities per day. Reuse provider URLs only when present;
-never invent live prices, availability, or links. Keep all costs numeric and
-within the stated trip budget. Output JSON only.
-""".strip()
-    result = _run_json_task("Fast itinerary architect", prompt)
-    return StructuredItinerary.model_validate(_extract_json_object(result))
 
 
 def regenerate_single_day(
@@ -143,12 +107,10 @@ local_customs, safety_tips, packing_notes, transport_tips.
 List fields should each contain 3-5 short, practical, non-generic bullet points
 specific to this destination. Do not invent live prices or links.
 """.strip()
-    try:
-        result = _run_json_task("Destination guidebook specialist", prompt)
-        payload = _extract_json_object(result)
-        return GuidebookContent.model_validate(payload)
-    except Exception:
-        return _fallback_guidebook(destination)
+    content = request_object(prompt, GuidebookContent)
+    if not content.overview.strip():
+        raise ValueError("Guidebook was empty; please retry.")
+    return content
 
 
 def _fallback_guidebook(destination: str) -> GuidebookContent:
@@ -308,7 +270,7 @@ def _expand_day(
     locked_hotel: dict[str, Any] | None = None,
     locked_flight: dict[str, Any] | None = None,
 ) -> StructuredDay:
-    provider_context = _provider_context(trip_data)
+    provider_context = json.dumps(compact_context(trip_data), ensure_ascii=False)
     locked_note = ""
     if locked_hotel:
         locked_note += (
@@ -335,11 +297,13 @@ Each activity requires: time, period, title, description, location,
 estimated_cost, indoor, source_url.
 Use 3-5 realistically paced activities. Keep costs numeric.
 """.strip()
-    result = _run_json_task(f"Day {day.day_number} itinerary specialist", prompt)
-    payload = _extract_json_object(result)
-    expanded = StructuredDay.model_validate(payload)
-    expanded.day_number = day.day_number
-    expanded.date = day.date
+    payload = request_object(prompt, DraftDay)
+    expanded = StructuredDay(day_number=day.day_number, **{**payload.model_dump(), "date": day.date})
+    context = compact_context(trip_data).get("local_search", [])
+    urls = {item["link"] for item in context} if isinstance(context, list) else set()
+    for activity in expanded.activities:
+        if activity.source_url not in urls:
+            activity.source_url = ""
     return expanded
 
 

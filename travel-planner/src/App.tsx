@@ -28,6 +28,11 @@ import { GroupExpensesPanel } from "./features/expenses/GroupExpensesPanel";
 import { InfoSections } from "./features/marketing/InfoSections";
 import { RouteMapPanel } from "./features/routes/RouteMapPanel";
 import { TravelVaultPanel } from "./features/vault/TravelVaultPanel";
+import { ThemeToggle } from "./features/theme/ThemeToggle";
+import { DateRangePicker } from "./features/dates/DateRangePicker";
+import { DraftPreview } from "./features/planning/DraftPreview";
+import { TravelLoading } from "./features/loading/TravelLoading";
+import { ResearchReview } from "./features/planning/ResearchReview";
 import type {
   AuthMode,
   AuthUser,
@@ -88,13 +93,6 @@ const selectedHotelMarker = L.divIcon({
   iconAnchor: [18, 18],
 });
 
-const loadingMessages = [
-  "Collecting live flight, hotel, weather, and local context.",
-  "Coordinating specialist agents around your travel rhythm.",
-  "Checking budget pressure and fallback provider behavior.",
-  "Polishing your itinerary into a structured Markdown plan.",
-];
-
 const WORKSPACE_KEY_PREFIX = "wanderful.currentTrip.v3";
 const SAVED_TRIPS_KEY = "wanderful.savedTrips.v1";
 const LEGACY_STORAGE_KEYS = ["wanderful.currentTrip", "wanderful.currentTrip.v2"];
@@ -113,8 +111,8 @@ function App() {
   const [cursorEnabled, setCursorEnabled] = useState(() => localStorage.getItem("wanderful.cursor-enabled") === "true");
   const { form, setForm, itinerary, setItinerary, structuredItinerary, setStructuredItinerary, activePlanJobId, setActivePlanJobId, options, setOptions, resultTab, setResultTab } = useTripWorkspace(initialForm, emptyOptions);
   const [loading, setLoading] = useState(false);
-  const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
   const [jobProgress, setJobProgress] = useState("");
+  const [draftDays, setDraftDays] = useState<StructuredDayData[]>([]);
   const [error, setError] = useState("");
   const [regeneratingDay, setRegeneratingDay] = useState<number | null>(null);
   const [authResolved, setAuthResolved] = useState(false);
@@ -165,6 +163,7 @@ function App() {
       return;
     }
     setHydratedScope(null);
+    setDraftDays([]);
     workspaceGeneration.current += 1;
     setActiveSavedTrip(null);
     setForm(initialForm);
@@ -327,16 +326,6 @@ function App() {
     };
   }, [Boolean(itinerary)]);
 
-  useEffect(() => {
-    if (!loading) {
-      return undefined;
-    }
-    const timer = window.setInterval(() => {
-      setLoadingMessageIndex((current) => (current + 1) % loadingMessages.length);
-    }, 5000);
-    return () => window.clearInterval(timer);
-  }, [loading]);
-
   const updateField = (field: keyof PlannerForm, value: string) => {
     setForm((current) => ({ ...current, [field]: value }));
   };
@@ -371,7 +360,7 @@ function App() {
     setStructuredItinerary(null);
     setActivePlanJobId(null);
     setOptions(emptyOptions);
-    setLoadingMessageIndex(0);
+    setDraftDays([]);
     setJobProgress("Starting trip planning job.");
 
     try {
@@ -394,9 +383,12 @@ function App() {
       if (controller.signal.aborted || (caught instanceof DOMException && caught.name === "AbortError")) return;
       setError(caught instanceof Error ? caught.message : "Planner request failed.");
     } finally {
-      if (planAbortRef.current === controller) planAbortRef.current = null;
-      setLoading(false);
-      setJobProgress("");
+      if (planAbortRef.current === controller) {
+        planAbortRef.current = null;
+        setLoading(false);
+        setJobProgress("");
+        setDraftDays([]);
+      }
     }
   };
 
@@ -419,6 +411,10 @@ function App() {
         throw new Error(payload.error || "Could not read planner job status.");
       }
       const job = payload.job;
+      if (signal?.aborted) return;
+      if (Array.isArray(job.metrics?.draft_days)) {
+        setDraftDays(job.metrics.draft_days as StructuredDayData[]);
+      }
       setJobProgress(job.progress || job.status);
       if (job.options) {
         setOptions(normalizeOptions(job.options));
@@ -699,6 +695,10 @@ function App() {
   };
 
   const loadSavedTrip = (trip: SavedTrip) => {
+    planAbortRef.current?.abort();
+    planAbortRef.current = null;
+    setLoading(false);
+    setDraftDays([]);
     setPendingTripDecision(null);
     workspaceGeneration.current += 1;
     setActiveSavedTrip(authUser ? { id: trip.id, revision: trip.revision } : null);
@@ -897,6 +897,7 @@ function App() {
   };
 
   const clearActiveTripState = () => {
+    setDraftDays([]);
     setPendingTripDecision(null);
     workspaceGeneration.current += 1;
     setActiveSavedTrip(null);
@@ -1025,6 +1026,7 @@ function App() {
               <Bookmark size={16} strokeWidth={1.7} /><span className="hidden text-[10px] font-medium tracking-[0.12em] md:inline">SAVED TRIPS</span>
             </button>
 
+            <ThemeToggle />
             {authUser?.status === "active" ? (
               <button type="button" onClick={() => setJobHistoryOpen(true)} className="hidden rounded-full px-3 py-2 text-[10px] font-medium tracking-[0.12em] text-white/78 transition hover:bg-[#3fb6c4]/10 hover:text-white xl:block">
                 JOBS
@@ -1143,8 +1145,7 @@ function App() {
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field label="Origin" value={form.origin} placeholder="LAX" onChange={(value) => updateField("origin", value)} />
                 <Field label="Destination" value={form.destination} placeholder="HNL or Hawaii" onChange={(value) => updateField("destination", value)} />
-                <Field type="date" label="Start date" value={form.start_date} onChange={(value) => updateField("start_date", value)} />
-                <Field type="date" label="End date" value={form.end_date} onChange={(value) => updateField("end_date", value)} />
+                <DateRangePicker start={form.start_date} end={form.end_date} onChange={(start_date, end_date) => setForm(current => ({ ...current, start_date, end_date }))} />
                 <Field label="Budget" value={form.budget} placeholder="2500" onChange={(value) => updateField("budget", value)} />
                 <div className="grid grid-cols-[1fr_1fr] gap-4">
                   <Field label="Currency" value={form.currency_code} maxLength={3} onChange={(value) => updateField("currency_code", value.toUpperCase())} />
@@ -1171,7 +1172,7 @@ function App() {
                 className="primary-cta mt-6 flex w-full items-center justify-center gap-3 rounded-[18px] px-8 py-4 text-[15px] font-semibold text-[#06181a] transition-all duration-300 active:scale-[0.99] disabled:cursor-wait disabled:opacity-60"
               >
                 {loading ? <Loader2 className="animate-spin" size={18} /> : <ArrowDown size={18} />}
-                {loading ? loadingMessages[loadingMessageIndex] : "Build my trip"}
+                {loading ? "Building your trip…" : "Build my trip"}
               </button>
               {loading && jobProgress ? (
                 <p className="mt-3 rounded-2xl border border-[#3fb6c4]/10 bg-[#3fb6c4]/[0.055] px-3 py-2 text-sm leading-relaxed text-white/62">
@@ -1179,6 +1180,8 @@ function App() {
                 </p>
               ) : null}
 
+              {loading && <TravelLoading theme="itinerary" label={draftDays.length ? "Finishing your adventure" : "Putting your adventure together"} compact={draftDays.length > 0} />}
+              {loading && authUser && <DraftPreview days={draftDays} />}
               {error && <div className="mt-4 rounded-3xl border border-red-300/20 bg-red-500/15 px-4 py-3 text-sm leading-relaxed text-red-50">{error}</div>}
             </form>
           </div>
@@ -1198,7 +1201,9 @@ function App() {
                 </div> : null}
               </div>
               {authUser && activeSavedTrip && (() => { const trip = savedTrips.find(item => item.id === activeSavedTrip.id); return trip ? <ProductWorkspace key={`${authUser.id}-${trip.id}`} trip={trip} onUpdated={acceptTripUpdate} /> : null; })()}
+              {authUser && activePlanJobId && structuredItinerary && <ResearchReview key={`${authUser.id}-${activePlanJobId}`} jobId={activePlanJobId} plan={structuredItinerary} onApply={handleStructuredItineraryChange} />}
               <ItineraryResult
+                planning={loading}
                 form={form}
                 itinerary={itinerary}
                 structuredItinerary={structuredItinerary}
@@ -1886,6 +1891,7 @@ function InfoRow({ icon, title, text }: { icon: ReactNode; title: string; text: 
 }
 
 function ItineraryResult({
+  planning,
   form,
   itinerary,
   structuredItinerary,
@@ -1902,6 +1908,7 @@ function ItineraryResult({
   cursorEnabled,
   onCursorChange,
 }: {
+  planning: boolean;
   form: PlannerForm;
   itinerary: string;
   structuredItinerary: StructuredItineraryData | null;
@@ -1995,11 +2002,7 @@ function ItineraryResult({
               onRegenerateDay={onRegenerateDay}
             />
           ) : (
-            <EmptyResult
-              icon={<Loader2 className="animate-spin" size={18} />}
-              title="Itinerary is being written"
-              text="Flights, hotels, map data, and recovery controls are available in the other tabs while the LLM finishes the final plan."
-            />
+            planning ? <TravelLoading theme="itinerary" /> : <EmptyResult icon={<Route size={18} />} title="No itinerary yet" text="Build your trip to explore a day-by-day plan." />
           )}
 
           {structuredItinerary?.days?.length ? (
@@ -2012,6 +2015,7 @@ function ItineraryResult({
 
       {activeTab === "hotels" ? (
         <div id="trip-panel-hotels" role="tabpanel" aria-labelledby="trip-tab-hotels"><HotelMapPanel
+            pending={planning && !options.provider_status?.hotels && !options.hotels.length}
             form={form}
             hotels={options.hotels}
             itineraryPlaces={(structuredItinerary?.days || []).flatMap(day => (day.activities || []).flatMap(activity => activity.coordinates && activity.source_id && activity.source_url ? [activity.coordinates] : []))}
@@ -2029,6 +2033,7 @@ function ItineraryResult({
 
       {activeTab === "flights" ? (
         <div id="trip-panel-flights" role="tabpanel" aria-labelledby="trip-tab-flights"><FlightOptionsPanel
+            pending={planning && !options.provider_status?.flights && !options.flights.length}
             form={form}
             flights={options.flights}
             providerStatus={options.provider_status?.flights}

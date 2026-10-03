@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from collections import Counter, defaultdict
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -26,6 +29,20 @@ load_dotenv()
 
 
 DEFAULT_TIMEOUT_SECONDS = 20
+_request_deadline: ContextVar[float | None] = ContextVar("provider_request_deadline", default=None)
+
+
+@contextmanager
+def interactive_provider_budget(seconds: float):
+    token = _request_deadline.set(time.monotonic() + seconds)
+    try:
+        yield
+    finally:
+        _request_deadline.reset(token)
+
+
+def has_interactive_budget() -> bool:
+    return _request_deadline.get() is not None
 SERPAPI_SEARCH_URL = "https://serpapi.com/search"
 OPENWEATHER_GEO_URL = "https://api.openweathermap.org/geo/1.0/direct"
 OPENWEATHER_FORECAST_URL = "https://api.openweathermap.org/data/2.5/forecast"
@@ -76,12 +93,19 @@ AIRPORT_ALIASES: dict[str, str] = {
 }
 
 
-def _timeout() -> int:
+def _timeout() -> float:
     raw_value = os.getenv("REQUEST_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS))
     try:
-        return max(1, int(raw_value))
+        configured = max(1, int(raw_value))
     except ValueError:
-        return DEFAULT_TIMEOUT_SECONDS
+        configured = DEFAULT_TIMEOUT_SECONDS
+    deadline = _request_deadline.get()
+    if deadline is None:
+        return configured
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise Timeout("Provider request timed out.")
+    return min(configured, remaining)
 
 
 def _safe_json(response: Response) -> dict[str, Any]:
@@ -99,11 +123,10 @@ def _format_api_error(prefix: str, exc: Exception) -> str:
         return f"{prefix}: request timed out. Try again later or raise REQUEST_TIMEOUT_SECONDS."
     if isinstance(exc, requests.HTTPError) and exc.response is not None:
         status = exc.response.status_code
-        body = exc.response.text[:500]
-        return f"{prefix}: HTTP {status}. Provider response: {body}"
+        return f"{prefix}: HTTP {status}. Retry or check provider configuration."
     if isinstance(exc, RequestException):
-        return f"{prefix}: network error calling provider. Details: {exc}"
-    return f"{prefix}: {exc}"
+        return f"{prefix}: network error calling provider."
+    return f"{prefix}: invalid request or provider response."
 
 
 def _parse_iso_date(value: str, field_name: str) -> date:
@@ -134,6 +157,15 @@ def normalize_airport_id(value: str) -> str:
         return AIRPORT_ALIASES[first_part_key]
 
     return upper
+
+
+def flight_airport_ids(value: str) -> str:
+    """Expand metropolitan identifiers; do not alter an explicit airport choice."""
+    resolved = normalize_airport_id(value)
+    return {
+        "ROM": "FCO,CIA", "PAR": "CDG,ORY", "LON": "LHR,LGW,LCY,STN,LTN,SEN",
+        "TYO": "HND,NRT", "NYC": "JFK,LGA,EWR",
+    }.get(resolved, resolved)
 
 
 def _normalize_place_key(value: str) -> str:
@@ -169,6 +201,7 @@ def _serpapi_get(params: dict[str, Any]) -> dict[str, Any]:
     if not api_key:
         raise RuntimeError("Missing SERPAPI_API_KEY in environment or .env file.")
 
+    transport_started = time.perf_counter()
     response = requests.get(
         SERPAPI_SEARCH_URL,
         params={**params, "api_key": api_key},
@@ -176,7 +209,11 @@ def _serpapi_get(params: dict[str, Any]) -> dict[str, Any]:
     )
     response.raise_for_status()
     payload = _safe_json(response)
+    elapsed = response.elapsed.total_seconds()
+    payload["_transport_timing"] = {"wall_ms": round((time.perf_counter() - transport_started) * 1000), "response_headers_ms": round(elapsed * 1000) if isinstance(elapsed, (int, float)) else None}
     if "error" in payload:
+        if params.get("engine") == "google_flights" and "hasn't returned any results for this query" in str(payload["error"]):
+            return {"best_flights": [], "other_flights": []}
         raise ValueError(f"SerpAPI returned an error: {payload['error']}")
     return payload
 
@@ -217,8 +254,8 @@ class FlightSearchTool(BaseTool):
             if return_date:
                 _parse_iso_date(return_date, "return_date")
 
-            resolved_origin = normalize_airport_id(origin)
-            resolved_destination = normalize_airport_id(destination)
+            resolved_origin = flight_airport_ids(origin)
+            resolved_destination = flight_airport_ids(destination)
             params: dict[str, Any] = {
                 "engine": "google_flights",
                 "departure_id": resolved_origin,

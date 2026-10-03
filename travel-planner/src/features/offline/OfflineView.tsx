@@ -2,14 +2,16 @@ import { useEffect, useState } from "react";
 import type { OfflineTripPack } from "../../domain/travel";
 import { listOfflinePacks } from "./storage";
 import { TodayMode } from "../workspace/TodayMode";
+import { TravelLoading } from "../loading/TravelLoading";
 
 export function OfflineView() {
   const [packs, setPacks] = useState<OfflineTripPack[]>([]);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
   const [todayTrip, setTodayTrip] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
-    const load = () => { void listOfflinePacks().then(values => { if (active) setPacks(values); }).catch(() => { if (active) setError("This browser could not open offline storage."); }); };
+    const load = () => { void listOfflinePacks().then(values => { if (active) setPacks(values); }).catch(() => { if (active) setError("This browser could not open offline storage."); }).finally(() => { if (active) setLoading(false); }); };
     load(); window.addEventListener("storage", load);
     return () => { active = false; window.removeEventListener("storage", load); };
   }, []);
@@ -19,7 +21,8 @@ export function OfflineView() {
     <p className="my-5 text-white/75">Read-only saved plans. No live prices, documents, or offline map tiles. Reconnect and sign in before editing.</p>
     <a className="inline-flex min-h-11 items-center rounded-full border border-white/25 px-5" href="/">Back to online workspace</a>
     {error && <p role="alert" className="mt-6 text-amber-100">{error}</p>}
-    {!packs.length && <p className="mt-8">No prepared trips on this device. Prepare one from your saved trip while online.</p>}
+    {loading && <TravelLoading theme="documents" label="Opening your offline trips" />}
+    {!loading && !error && !packs.length && <p className="mt-8">No prepared trips on this device. Prepare one from your saved trip while online.</p>}
     {packs.map(pack => <article key={pack.trip.id} className="mt-8 rounded-3xl border border-[#72d7dc]/25 bg-white/5 p-6">
       <h2 className="text-3xl">{pack.trip.name || pack.trip.destination}</h2>
       <p className="mt-2 text-sm text-white/75">{pack.trip.date_range} · Saved {new Date(pack.generated_at).toLocaleString()}</p>

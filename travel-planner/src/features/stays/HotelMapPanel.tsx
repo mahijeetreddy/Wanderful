@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { recordHandoff } from "../search/handoff";
+import { TravelLoading } from "../loading/TravelLoading";
 import { meanDistanceKm } from "./proximity";
 import type { ReactNode } from "react";
 import { AlertTriangle, ArrowDown, ArrowRight, BookOpen, Bookmark, Braces, Building2, CalendarDays, Check, CircleUserRound, Clock, Cloud, CloudFog, CloudLightning, CloudRain, CloudSnow, Compass, Copy, Download, ExternalLink, FileText, FolderLock, ListChecks, Loader2, Lock, MapPin, Plane, ReceiptText, RotateCcw, Route, Search, Share2, Sparkles, Sun, Users, Wallet } from "lucide-react";
@@ -40,6 +41,7 @@ export function HotelMapPanel({
   onLockHotel,
   onHotelsUpdated,
   providerStatus,
+  pending = false,
   itineraryPlaces = [],
 }: {
   form: PlannerForm;
@@ -49,6 +51,7 @@ export function HotelMapPanel({
   onLockHotel: (hotelId: string) => void;
   onHotelsUpdated: (hotels: HotelOption[], mapCenter: Coordinates | null) => void;
   providerStatus?: ProviderStatus;
+  pending?: boolean;
   itineraryPlaces?: Coordinates[];
 }) {
   const [selectedHotelId, setSelectedHotelId] = useState(hotels[0]?.id || "");
@@ -117,7 +120,8 @@ export function HotelMapPanel({
       </div>
       <div className={`${mobileView === "list" ? "block" : "hidden lg:block"} space-y-3 pr-1 lg:max-h-[850px] lg:overflow-auto`}>
         <ProviderRetry form={form} kind="hotels" status={providerStatus} onResults={(result) => onHotelsUpdated(result.hotels || [], result.map_center || null)} />
-        {!hotels.length ? <p className="p-3 text-sm text-white/70">No stays to show. Search controls remain available below.</p> : null}
+        {(hotelLoading || pending) && <TravelLoading theme="stays" compact={hotels.length > 0} />}
+        {!hotels.length && !hotelLoading && !pending && providerStatus !== "searching" && providerStatus !== "queued" ? <p className="p-3 text-sm text-white/70">No stays to show. Search controls remain available below.</p> : null}
         <div className="rounded-[28px] border border-[#3fb6c4]/12 bg-[radial-gradient(circle_at_20%_0%,rgba(63,182,196,0.16),transparent_34%),rgba(0,0,0,0.68)] p-5 shadow-[0_22px_70px_rgba(0,0,0,0.28)]">
           <div className="flex items-start justify-between gap-4">
             <div>

@@ -66,12 +66,12 @@ def test_regenerate_single_day_only_replaces_target_day():
 
 def test_generate_structured_plan_uses_single_pass_fast_path(monkeypatch):
     monkeypatch.setenv("FAST_PLAN_MODE", "true")
-    with patch("planner_engine._generate_complete_plan", return_value=_plan()) as generate:
+    with patch("planner_engine.generate_direct_plan", return_value=(_plan(), {"planning_mode": "direct_structured", "llm_calls": 1})) as generate:
         plan, metrics = generate_structured_plan(_travel_inputs(), {"options": {}})
 
     generate.assert_called_once()
     assert len(plan.days) == 2
-    assert metrics["planning_mode"] == "single_pass"
+    assert metrics["planning_mode"] == "direct_structured"
     assert metrics["llm_calls"] == 1
 
 
@@ -113,11 +113,12 @@ def test_expand_day_prompt_mentions_locked_hotel():
     locked_hotel = {"id": "hotel-1", "name": "Grand Hotel", "description": "Central boutique stay"}
     captured_prompt = {}
 
-    def fake_run_json_task(role, prompt):
+    def fake_run_json_task(prompt, schema):
         captured_prompt["value"] = prompt
-        return day.model_dump_json()
+        from direct_planner import DraftDay
+        return DraftDay(date=day.date, title=day.title, activities=[{"time": "10:00", "title": "Museum", "location": "Rome", "description": "Visit", "estimated_cost": 10, "indoor": True, "source_url": ""}])
 
-    with patch("planner_engine._run_json_task", side_effect=fake_run_json_task):
+    with patch("planner_engine.request_object", side_effect=fake_run_json_task):
         _expand_day(travel_inputs, {"options": {}}, day, locked_hotel=locked_hotel, locked_flight=None)
 
     assert "Grand Hotel" in captured_prompt["value"]
@@ -132,7 +133,7 @@ def test_generate_guidebook_content_parses_llm_json():
         '"safety_tips": ["Watch for pickpockets near stations."], '
         '"packing_notes": ["Comfortable walking shoes."], "transport_tips": ["Validate bus tickets before boarding."]}'
     )
-    with patch("planner_engine._run_json_task", return_value=fake_response):
+    with patch("planner_engine.request_object", return_value=GuidebookContent.model_validate_json(fake_response)):
         content = generate_guidebook_content("Rome", "2026-09-01", "2026-09-05", "food and history")
 
     assert isinstance(content, GuidebookContent)
@@ -141,9 +142,7 @@ def test_generate_guidebook_content_parses_llm_json():
     assert "Validate bus tickets before boarding." in content.transport_tips
 
 
-def test_generate_guidebook_content_falls_back_on_llm_failure():
-    with patch("planner_engine._run_json_task", side_effect=RuntimeError("provider unavailable")):
-        content = generate_guidebook_content("Rome", "2026-09-01", "2026-09-05", "food and history")
-
-    assert isinstance(content, GuidebookContent)
-    assert "Rome" in content.overview
+def test_generate_guidebook_content_does_not_claim_failed_request_succeeded():
+    with patch("planner_engine.request_object", side_effect=RuntimeError("provider unavailable")):
+        with pytest.raises(RuntimeError):
+            generate_guidebook_content("Rome", "2026-09-01", "2026-09-05", "food and history")

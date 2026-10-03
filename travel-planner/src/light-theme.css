@@ -1,0 +1,44 @@
+/* Explicit light palette, including compatibility surfaces for legacy Tailwind cards.
+   Do not invert images, video, map tiles or the dark theme. */
+[data-theme="light"] .draft-preview { background: #eef5f8; border-color: #9ebbc9; }
+[data-theme="light"] .draft-preview article { background: #fffdfa; }
+[data-theme="light"] .draft-preview :is(h3,h4,p,li) { color: #213b48 !important; }
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #faf7f2; --surface: #fffdfa; --surface-soft: #eef5f8;
+  --surface-faint: #f4f7f8; --surface-strong: #fffdfa; --surface-elevated: #dcecf4;
+  --border: #d6dfe3; --border-strong: #9ebbc9;
+  --accent: #ed9c62; --accent-soft: #fbe8d9; --accent-text: #35200e;
+  --text: #213b48; --text-dim: #526b78;
+}
+[data-theme="light"] .app-shell { background: var(--bg); color: var(--text); }
+[data-theme="light"] .transition-all { transition-property: transform, opacity; }
+[data-theme="light"] .hero-title { text-shadow: none; }
+[data-theme="light"] .section-kicker { color: var(--text-dim); }
+[data-theme="light"] .app-shell > .fixed.inset-0:is(.z-0,.z-10) { display: none !important; }
+[data-theme="light"] .hero-section { background: radial-gradient(ellipse at 85% 20%, #d9edf7 0, transparent 55%), linear-gradient(150deg,#fffdfa,#faf0e4); }
+[data-theme="light"] .hero-section::before { opacity: .12; }
+[data-theme="light"] :is(.site-header-shell,.planner-form-panel,.results-workspace,.stay-card,.flight-ticket,.source-panel,.source-sheet,.marketing-panel,.hero-intelligence-card,.planner-story-card) { background: var(--surface); border-color: var(--border); box-shadow: 0 12px 40px #2244550a; }
+[data-theme="light"] :is(.planner-section,.marketing-section) { background: var(--bg); }
+[data-theme="light"] :is(.result-tab-list,.secondary-cta,.feature-row,.benefit-card,.trip-meta-pill,.source-action,.form-control) { background: var(--surface-soft); border-color: var(--border); color: var(--text); }
+[data-theme="light"] :is(.form-control:focus,.form-control:hover) { background: #fff; border-color: #52809a; }
+[data-theme="light"] :is(.primary-cta,.brand-mark) { background: linear-gradient(135deg,#ffc996,#ef9f67); color: #35200e; box-shadow: 0 6px 20px #ba662b18; }
+[data-theme="light"] :is(.action-button,.source-action,.itinerary-markdown,.itinerary-markdown h1,.itinerary-markdown h2,.itinerary-markdown h3,.itinerary-markdown strong) { color: var(--text); }
+[data-theme="light"] [class~="text-white"] { color: var(--text); }
+[data-theme="light"] [class*="text-white/"] { color: var(--text-dim); }
+[data-theme="light"] :is([class*="text-slate-"],[class*="text-gray-"],[class*="text-zinc-"],[class*="text-[#91"],[class*="text-[#b5"]) { color: var(--text-dim); }
+[data-theme="light"] :is([class*="bg-slate-9"],[class*="bg-slate-8"],[class*="bg-gray-9"]) { background-color: var(--surface); }
+[data-theme="light"] [class*="border-white/"] { border-color: var(--border); }
+[data-theme="light"] [class*="bg-white/"] { background-color: var(--surface-soft); }
+[data-theme="light"] :is([class*="bg-[#0"],[class*="bg-[#1"],[class~="bg-black"]) { background-color: var(--surface); }
+[data-theme="light"] :is([class*="text-[#72"],[class*="text-[#8d"],[class*="text-[#a9"],[class*="text-[#3f"],[class*="text-[#65"],[class*="text-[#f0"]) { color: #376880; }
+[data-theme="light"] :is([class*="text-amber-"],[class*="text-yellow-"]) { color: #85501b; }
+[data-theme="light"] :is([class*="text-emerald-"],[class*="text-green-"]) { color: #236948; }
+[data-theme="light"] :is([class*="text-red-"],[class*="text-rose-"]) { color: #a33238; }
+[data-theme="light"] .trip-dialog { background: #e9f0f3c9; }
+[data-theme="light"] :where(button,a,input,textarea,select):focus-visible { outline-color: #276c96; }
+[data-theme="light"] input::placeholder, [data-theme="light"] textarea::placeholder { color: #6b7d85; }
+[data-theme="light"] .leaflet-container { background: #e6eef2; }
+[data-theme="light"] .leaflet-tile-pane { filter: none; }
+[data-theme="light"] .leaflet-popup-content-wrapper, [data-theme="light"] .leaflet-popup-tip { background: #fffdfa; color: #213b48; }
+[data-theme="light"] .route-number-marker span { background: #fffdfa; color: #234f66; border-color: #e6a06a; }
